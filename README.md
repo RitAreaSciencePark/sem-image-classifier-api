@@ -72,10 +72,8 @@ sem-image-classifier-api/
 - `uv` for Python dependency management
 - `podman` for image builds
 - `kubectl` for Kubernetes operations
-- SSH access to the target K3s control-plane host
+- A Linux development host with SSH access to the Stencil virtual datacenter and its K3s cluster nodes
 - A container registry reachable by both the build host and Kubernetes nodes
-
-Private cluster details belong in ignored local override files, not in tracked files.
 
 ## Configuration Model
 
