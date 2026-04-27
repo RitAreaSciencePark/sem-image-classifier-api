@@ -1,0 +1,170 @@
+# KrakenD API gateway deployment and service.
+# Init container compiles plugin from ConfigMap source into shared volume.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: krakend
+  labels:
+    app.kubernetes.io/name: krakend
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: krakend
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: krakend
+        app.kubernetes.io/component: gateway
+    spec:
+      terminationGracePeriodSeconds: 15
+
+      initContainers:
+        # Compile plugin from ConfigMap source.
+        - name: plugin-builder
+          image: krakend/builder:2.11.2
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "Copying plugin source (follow symlinks)..." &&
+              cp -L /plugins-src/main.go /plugins-src/go.mod /plugins-src/go.sum /workspace/ &&
+              echo "Files in workspace:" && ls -la /workspace/ &&
+              cd /workspace &&
+              echo "Building KrakenD plugin..." &&
+              go build -buildmode=plugin -o /plugins/krakend-server-example.so . &&
+              echo "Plugin built successfully: $(ls -la /plugins/)"
+          volumeMounts:
+            - name: krakend-plugins
+              mountPath: /plugins
+            - name: plugin-src
+              mountPath: /plugins-src
+              readOnly: true
+            - name: plugin-workspace
+              mountPath: /workspace
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+      containers:
+        - name: krakend
+          image: krakend:2.11.2
+          imagePullPolicy: IfNotPresent
+
+          command: ["/usr/bin/krakend"]
+          args: ["run", "-c", "/etc/krakend/krakend.tmpl"]
+
+          ports:
+            - name: http
+              containerPort: 8080
+
+          env:
+            # Override auto-injected service env var format (tcp://...) with raw port.
+            - name: KRAKEND_PORT
+              value: "8080"
+            - name: KRAKEND_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: KRAKEND_DB_PASSWORD
+            - name: FC_ENABLE
+              value: "1"
+            # Flexible Configuration directories mounted from generated ConfigMaps.
+            - name: FC_SETTINGS
+              value: "/etc/krakend-src/settings"
+            - name: FC_PARTIALS
+              value: "/etc/krakend-src/partials"
+            - name: FC_TEMPLATES
+              value: "/etc/krakend-src/templates"
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+          livenessProbe:
+            httpGet:
+              path: /__health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+
+          readinessProbe:
+            httpGet:
+              path: /__health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: krakend-template
+              mountPath: /etc/krakend
+            - name: krakend-settings
+              mountPath: /etc/krakend-src/settings
+              readOnly: true
+            - name: krakend-templates
+              mountPath: /etc/krakend-src/templates
+              readOnly: true
+            - name: krakend-partials
+              mountPath: /etc/krakend-src/partials
+              readOnly: true
+            - name: krakend-plugins
+              mountPath: /etc/krakend/plugins
+              readOnly: true
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: krakend-template
+          configMap:
+            name: krakend-template
+        - name: krakend-settings
+          configMap:
+            name: krakend-settings
+        - name: krakend-templates
+          configMap:
+            name: krakend-templates
+        - name: krakend-partials
+          configMap:
+            name: krakend-partials
+        - name: krakend-plugins
+          # Runtime plugin .so is written by init container on each pod start.
+          emptyDir: {}
+        - name: plugin-workspace
+          emptyDir: {}
+        - name: plugin-src
+          configMap:
+            name: krakend-plugin
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: krakend
+  labels:
+    app.kubernetes.io/name: krakend
+    app.kubernetes.io/component: gateway
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  selector:
+    app.kubernetes.io/name: krakend

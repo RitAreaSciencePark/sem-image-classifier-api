@@ -1,0 +1,127 @@
+    {
+      "endpoint": "/health",
+      "method": "GET",
+      "output_encoding": "json",
+      "backend": [
+        {
+          "url_pattern": "/health",
+          "encoding": "json",
+          "method": "POST",
+          "host": ["{{ .settings.backend_host }}"]
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/v1/inference",
+      "method": "POST",
+      "output_encoding": "no-op",
+      "timeout": "30s",
+      "extra_config": {
+        "qos/ratelimit/router": {
+          "max_rate": 100,
+          "capacity": 100
+        },
+        "security/cors": {
+          "allow_origins": ["*"],
+          "allow_methods": ["POST", "OPTIONS"],
+          "allow_headers": ["Content-Type", "Authorization"],
+          "expose_headers": ["Content-Length"],
+          "max_age": "12h"
+        }{{ if .settings.auth.jwk_url }},
+        {{ template "auth.tmpl" $ }}{{ end }}
+      },
+      "backend": [
+        {
+          "url_pattern": "/inference",
+          "encoding": "no-op",
+          "method": "POST",
+          "host": ["{{ .settings.backend_host }}"],
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/v1/jobs/status",
+      "method": "POST",
+      "output_encoding": "no-op",
+      "timeout": "10s",
+      "extra_config": {
+        "qos/ratelimit/router": {
+          "max_rate": 200,
+          "capacity": 200
+        }{{ if .settings.auth.jwk_url }},
+        {{ template "auth.tmpl" $ }}{{ end }}
+      },
+      "backend": [
+        {
+          "url_pattern": "/status",
+          "encoding": "no-op",
+          "method": "POST",
+          "host": ["{{ .settings.backend_host }}"],
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/v1/jobs/results",
+      "method": "POST",
+      "output_encoding": "no-op",
+      "timeout": "10s",
+      "extra_config": {
+        {{ if .settings.auth.jwk_url }}{{ template "auth.tmpl" $ }}{{ end }}
+      },
+      "backend": [
+        {
+          "url_pattern": "/results",
+          "encoding": "no-op",
+          "method": "POST",
+          "host": ["{{ .settings.backend_host }}"],
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/v1/version",
+      "method": "GET",
+      "output_encoding": "json",
+      "extra_config": {
+        "proxy": {
+          "static": {
+            "data": {
+              "api_version": "v1.0.0",
+              "gateway": "KrakenD",
+              "service": "SEM Classifier API",
+              "endpoints": {
+                "GET  /health": "Backend health check (model + Redis)",
+                "POST /api/v1/inference": "Submit inference job — returns job_id",
+                "POST /api/v1/jobs/status": "Poll job status — body: {\"job_id\": \"<uuid>\"}",
+                "POST /api/v1/jobs/results": "Get results — body: {\"job_id\": \"<uuid>\"}",
+                "GET  /api/v1/version": "This endpoint (static, no backend call)",
+                "GET  /__health": "KrakenD gateway health (built-in)"
+              }
+            },
+            "strategy": "always"
+          }
+        }
+      },
+      "backend": [
+        {
+          "host": ["{{ .settings.backend_host }}"],
+          "url_pattern": "/health",
+          "encoding": "json",
+          "method": "POST"
+        }
+      ]
+    }

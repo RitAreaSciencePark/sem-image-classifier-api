@@ -1,0 +1,8 @@
+"auth/validator": {
+      "alg": "{{ .settings.auth.alg }}",
+      "operation_debug": {{ .settings.auth.operation_debug }},
+      "jwk_url": "{{ .settings.auth.jwk_url }}",
+  "issuer": "{{ .settings.auth.issuer }}"{{ if .settings.auth.audience }},
+  "audience": ["{{ .settings.auth.audience }}"]{{ end }},
+      "disable_jwk_security": {{ .settings.auth.disable_jwk_security }}
+    }

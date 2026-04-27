@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+.venv/
+
+# uv
+.python-version
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Container build artifacts
+*.tar
+
+# Logs
+*.log
+/tmp/
+
+# Local secret overrides (keep template env files tracked)
+k8s/env/*/*.local.yaml
+k8s/env/*/*.local.json
+k8s/env/*/cluster.local.env
+
+# Internal docs
+internal_docs/
+
+# AI stack
+CLAUDE.md
+.codex
+
+# Local k8s files
+k8s/releases/
+k8s/access.log

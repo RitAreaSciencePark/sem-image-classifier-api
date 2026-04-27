@@ -1,0 +1,108 @@
+# PostgreSQL StatefulSet for usage-tracking data.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/component: database
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+  selector:
+    app.kubernetes.io/name: postgresql
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/component: database
+spec:
+  serviceName: postgresql
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgresql
+        app.kubernetes.io/component: database
+    spec:
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: postgresql
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: postgres
+              containerPort: 5432
+
+          env:
+            - name: POSTGRES_DB
+              value: "krakend"
+            - name: POSTGRES_USER
+              value: "krakend"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: POSTGRES_PASSWORD
+            # PGDATA must be a subdirectory under the mounted volume.
+            - name: PGDATA
+              value: "/var/lib/postgresql/data/pgdata"
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "krakend", "-d", "krakend"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "krakend", "-d", "krakend"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+
+      volumes:
+        - name: init-scripts
+          configMap:
+            name: postgresql-init
+
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

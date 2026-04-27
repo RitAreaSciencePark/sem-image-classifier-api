@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bentoml-config
+  labels:
+    app.kubernetes.io/name: bentoml
+    app.kubernetes.io/component: config
+data:
+  REDIS_HOST: "redis-0.redis"
+  REDIS_PORT: "6379"
+  JOB_TTL: "3600"
+  MODEL_SOURCE: "hugging_face"
+  MODEL_ID: "t0m-R/vit-sem-classification"
+  MODEL_REVISION: "4d00fc90d2127ca2ce683703bfed07b4d8a25bb2"
+  MODEL_CACHE_DIR: ""
+  MODEL_LOCAL_FILES_ONLY: "true"

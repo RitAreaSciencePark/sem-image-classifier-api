@@ -1,0 +1,37 @@
+{
+  "$schema": "https://www.krakend.io/schema/v3.json",
+  "version": 3,
+  "name": "SEM Image Classifier API Gateway",
+  "port": {{ .settings.port }},
+  "timeout": "{{ .settings.timeout }}",
+  "output_encoding": "json",
+  {{ if .settings.plugin.folder }}"plugin": {
+    "pattern": "{{ .settings.plugin.pattern }}",
+    "folder": "{{ .settings.plugin.folder }}"
+  },{{ end }}
+  "endpoints": [
+{{ template "bentoml_endpoints.tmpl" . }}
+  ],
+  "extra_config": {
+    "telemetry/logging": {
+      "level": "INFO",
+      "prefix": "[KRAKEND]",
+      "syslog": false,
+      "stdout": true
+    }{{ if .settings.plugin.folder }},
+    "plugin/http-server": {
+      "name": ["krakend-server-example"],
+      "krakend-server-example": {
+        "service_name": "{{ .settings.service_name }}",
+        "paths": {{ marshal .settings.plugin.paths }},
+        "database": {
+          "host": "{{ .settings.database.host }}",
+          "port": "{{ .settings.database.port }}",
+          "user": "{{ .settings.database.user }}",
+          "password": "{{ .settings.database.password }}",
+          "dbname": "{{ .settings.database.dbname }}"
+        }
+      }
+    }{{ end }}
+  }
+}

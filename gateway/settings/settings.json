@@ -1,0 +1,37 @@
+{
+  "port": 8080,
+  "timeout": "30s",
+  "backend_host": "http://bentoml:3000",
+  "service_name": "sem-image-classifier",
+  "auth": {
+    "provider": "mock-oidc",
+    "alg": "RS256",
+    "jwk_url": "http://mock-oidc:8080/default/jwks",
+    "issuer": "http://mock-oidc:8080/default",
+    "audience": "",
+    "disable_jwk_security": true,
+    "operation_debug": true,
+    "authentik": {
+      "jwk_url": "",
+      "issuer": "",
+      "audience": "",
+      "disable_jwk_security": false
+    }
+  },
+  "plugin": {
+    "pattern": ".so",
+    "folder": "/etc/krakend/plugins",
+    "paths": [
+      "/api/v1/inference",
+      "/api/v1/jobs/status",
+      "/api/v1/jobs/results"
+    ]
+  },
+  "database": {
+    "host": "postgresql-0.postgresql",
+    "port": "5432",
+    "user": "krakend",
+    "password": "",
+    "dbname": "krakend"
+  }
+}

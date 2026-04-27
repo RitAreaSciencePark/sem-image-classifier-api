@@ -1,0 +1,41 @@
+[project]
+name = "sem-image-classifier-api"
+version = "1.0.0"
+description = "Async SEM image classifier API with BentoML, Redis, and KrakenD"
+license = "EUPL-1.2-or-later"
+authors = [
+    { name = "Luis Fernando Palacios Flores" },
+]
+requires-python = ">=3.12"
+dependencies = [
+    "bentoml>=1.4.0",
+    "redis>=5.0.0",
+    "transformers>=4.30.0",
+    "Pillow>=9.0.0",
+    "pydantic>=2.0.0",
+    "requests>=2.28.0",
+    # ── PyTorch (CPU-only) ──────────────────────────────────────────────
+    # CPU-only torch is ~200MB vs ~2GB for full torch (with CUDA stubs).
+    # This is installed via --index-url in the Containerfile, not here,
+    # because pyproject.toml doesn't support per-package index URLs.
+    #
+    # For local dev on a machine WITH a GPU:
+    #   uv add torch torchvision
+    # For local dev CPU-only:
+    #   uv add torch torchvision --index-url https://download.pytorch.org/whl/cpu
+    #
+    # CPU-only wheels keep the deployment image small. GPU support needs a separate deployment design.
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "types-requests>=2.31.0.6",
+    "pytest>=9.0.3",
+]
+
+[tool.uv]
+# CPU-only PyTorch index — saves ~1.8GB in image size.
+# Remove this section to get full torch with CUDA stubs.
+extra-index-url = ["https://download.pytorch.org/whl/cpu"]
+
+[tool.mypy]
+disable_error_code = ["import-untyped"]
+explicit_package_bases = true
