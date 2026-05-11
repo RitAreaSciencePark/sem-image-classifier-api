@@ -210,7 +210,7 @@ def summarize(results: list[Result]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Generate authenticated traffic against the SEM API."
+        description="Generate authenticated traffic against the Model Inference Service API."
     )
     parser.add_argument("--base-url", default="http://localhost:8080")
     parser.add_argument(

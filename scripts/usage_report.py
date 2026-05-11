@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Generate terminal, JSON, or static HTML reports from api_usage."""
 
+# Usage examples:
+#   uv run python scripts/usage_report.py summary --since 24h
+#   uv run python scripts/usage_report.py report --since 7d --output /tmp/usage.html
+#   uv run python scripts/usage_report.py json --since 2h
+
 from __future__ import annotations
 
 import argparse
@@ -226,7 +231,7 @@ def render_summary(report: dict[str, Any]) -> str:
     bucket = report.get("bucket", "hour")
 
     lines = [
-        "SEM API Usage Summary",
+        "Model Inference Service API Usage Summary",
         f"Generated UTC: {report.get('generated_at_utc', '')}",
         f"Timezone: {report.get('timezone', 'UTC')} | Bucket: {bucket}",
         f"Coverage: {coverage_start} -> {coverage_end}",
@@ -373,11 +378,11 @@ def render_html(report: dict[str, Any]) -> str:
 """.strip()
     return f"""<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>SEM API Usage Report</title><style>{css}</style></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Model Inference Service API Usage Report</title><style>{css}</style></head>
 <body><main class="wrap">
 <section class="hero">
   <div class="eyebrow">Static Usage Report</div>
-  <h1>SEM API Usage</h1>
+    <h1>Model Inference Service API Usage</h1>
   <p>Generated {esc(generated)} UTC. Coverage in {esc(report.get("timezone", "UTC"))}: {esc(coverage_start)} to {esc(coverage_end)}.</p>
 </section>
 <section class="cards">

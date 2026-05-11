@@ -44,3 +44,6 @@ CLAUDE.md
 # Local k8s files
 k8s/releases/
 k8s/access.log
+
+# Usage report
+usage-report.html
