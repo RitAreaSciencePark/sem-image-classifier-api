@@ -75,6 +75,10 @@ sem-image-classifier-api/
 - A Linux development host with SSH access to the Stencil virtual datacenter and its K3s cluster nodes
 - A container registry reachable by both the build host and Kubernetes nodes
 
+> ⚠️ **Warning (dev.sh is environment-specific):** `k8s/dev.sh` is designed around the author’s development environment and assumptions (SSH access to the K3s hosts, kubeconfig tunnel patching, registry reachability, and the tracked dev/prod env templates). It will not work out-of-the-box on other infrastructure.
+>
+> If your environment satisfies the requirements above, you can adapt it by creating your own `cluster.local.env` and `.local.*` overrides and validating with `./dev.sh config --env <env>` before running any deploy/reset/bootstrap commands. Some commands (notably `reset` and `bootstrap`) delete the configured namespace.
+
 ## Configuration Model
 
 `k8s/dev.sh` is the namespace and deployment authority. It owns the service identity and operational flow: app name, namespace, image repository, image tag, BentoML service entrypoint, namespace reset guardrails, build, deploy, access, and reporting helpers.
@@ -127,6 +131,8 @@ Private mode treats `MODEL_CACHE_DIR` as a Hugging Face cache root, not as a sin
 Runtime loads from the baked image cache. `MODEL_CACHE_DIR` is build-only.
 
 ## Build And Deploy
+
+> ⚠️ **Warning (dev.sh is environment-specific):** The commands below assume an environment compatible with `k8s/dev.sh`. You will need to adapt `k8s/env/<env>/cluster.local.env` (plus the `.local.*` overrides) for your cluster/registry and confirm the resolved config with `./dev.sh config --env <env>`.
 
 Set up local cluster values first:
 
