@@ -278,6 +278,12 @@ Start with `docs/MODEL_MIGRATION.md`. The short version:
 
 The default image uses CPU-only PyTorch wheels to keep the deployment smaller and simpler. This is the right default for single-image SEM inference. GPU support should be treated as a separate deployment design because it changes node prerequisites, image base, dependency resolution, scheduling, and resource limits.
 
+## Acknowledgments
+
+This project was developed as part of my master's thesis *"Building Service Layers in the NFFA-DI Digital Ecosystem: Governed Bucket Management and Reusable Analysis Services"*, submitted in fulfilment of the requirements for the Master in Data Management and Curation (MDMC) at SISSA / AREA Science Park (Trieste, Italy).
+
+I thank my supervisor **Dr. Tommaso Rodani** ([tommaso.rodani@areasciencepark.it](mailto:tommaso.rodani@areasciencepark.it)) for his guidance and support throughout this work.
+
 ## License
 
 Copyright is held by AREA Science Park. The author is Luis Fernando Palacios Flores.
