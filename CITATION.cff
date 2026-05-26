@@ -1,0 +1,59 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: Reusable Async Analysis Service Pipeline
+version: 1.0.0
+date-released: "2026-05-26"
+license: EUPL-1.2
+repository-code: https://github.com/RitAreaSciencePark/sem-image-classifier-api
+abstract: >
+  A modular, reusable framework for asynchronous model serving on Kubernetes,
+  built on BentoML, Redis, KrakenD, and PostgreSQL. The architecture decouples
+  generic async queue orchestration, modality-specific input handling, and model
+  inference into independent layers, enabling any non-LLM inference workload to
+  be deployed by replacing only the model-specific component. Ships with a
+  Hugging Face ViT SEM (Scanning Electron Microscopy) image classifier as its
+  reference implementation, deployed for the NFFA-DI Digital Ecosystem at
+  AREA Science Park.
+authors:
+  - family-names: Palacios Flores
+    given-names: Luis Fernando
+    email: luf.palacios@gmail.com
+    orcid: https://orcid.org/0009-0008-3517-6061
+    affiliation: AREA Science Park
+  - family-names: Rodani
+    given-names: Tommaso
+    email: tommaso.rodani@areasciencepark.it
+    orcid: https://orcid.org/0000-0003-0570-3509
+    affiliation: AREA Science Park
+keywords:
+  - async model serving
+  - reusable framework
+  - Kubernetes
+  - BentoML
+  - Redis
+  - KrakenD
+  - scientific computing
+  - image classification
+  - scanning electron microscopy
+  - NFFA-DI
+  - ORFEO
+  - K3s
+preferred-citation:
+  type: thesis
+  title: >-
+    Building Service Layers in the NFFA-DI Digital Ecosystem: Governed
+    Bucket Management and Reusable Analysis Services
+  authors:
+    - family-names: Palacios Flores
+      given-names: Luis Fernando
+      email: luf.palacios@gmail.com
+      orcid: https://orcid.org/0009-0008-3517-6061
+      affiliation: AREA Science Park
+  year: 2026
+  institution:
+    name: SISSA and AREA Science Park
+  thesis-type: "Master's thesis"
+  notes: >
+    Master in Data Management and Curation (MDMC), 2025–2026.
+    Supervised by Dr. Tommaso Rodani (tommaso.rodani@areasciencepark.it).
