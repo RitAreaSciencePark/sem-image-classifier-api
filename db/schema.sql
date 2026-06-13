@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS api_usage (
     id            SERIAL PRIMARY KEY,
     timestamp     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     username      VARCHAR(250) NOT NULL,
-    service_name  VARCHAR(255) DEFAULT 'sem-image-classifier',
+    service_name  VARCHAR(255) DEFAULT 'model-api',
     endpoint_type VARCHAR(50)  NOT NULL,
     status_code   INTEGER,
     url_path      TEXT NOT NULL

@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "prod-overlay.schema.json",
+  "title": "ML platform production overlay",
+  "description": "Per-service production deltas consumed by ml_platform.generator.render (not OpenAPI Overlay).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kubernetes", "auth", "ingress", "image", "registry"],
+  "properties": {
+    "kubernetes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace"],
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Production Kubernetes namespace for this service."
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "jwk_url", "issuer", "disable_jwk_security", "operation_debug"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["external"] },
+        "jwk_url": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "issuer": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "disable_jwk_security": { "type": "boolean", "const": false },
+        "operation_debug": { "type": "boolean", "const": false }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "host", "ingress_class"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "host": { "type": "string", "minLength": 1 },
+        "ingress_class": { "type": "string", "minLength": 1 }
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registry", "tag", "digest"],
+      "properties": {
+        "registry": { "type": "string", "pattern": "^ghcr\\.io/" },
+        "tag": { "type": "string", "minLength": 1 },
+        "digest": { "type": "string" }
+      }
+    },
+    "registry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ghcr_owner"],
+      "properties": {
+        "ghcr_owner": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

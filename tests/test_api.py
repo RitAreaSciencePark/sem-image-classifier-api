@@ -2,22 +2,83 @@
 End-to-End API Tests for SEM Classifier
 
 Tests the full request flow through KrakenD → BentoML → Redis,
-including JWT authentication via mock-oidc.
+including JWT authentication via Authentik (client_credentials).
 
 PREREQUISITES:
-  1. Full stack running on K3s:  ./dev.sh deploy
-  2. Port-forwards active:       ./dev.sh access
+  See docs/dev-environment-setup.md for full cluster setup.
+  1. Authentik running:  ./infra.sh deploy && ./infra.sh configure
+  2. API stack running:  ./app.sh deploy
+  3. Port-forwards:      ./app.sh access
      - KrakenD on localhost:8080
-     - mock-oidc on localhost:18080
+     - Authentik on localhost:9001 (for token acquisition)
 
 Run:
-    python tests/test_api.py
+    python tests/test_api.py   # reads oidc-client-secret from services/<id>/secrets.local.yaml
 """
 
+import re
 import requests
 import time
 import sys
 import os
+from pathlib import Path
+
+
+def _load_deploy_env() -> None:
+    global BASE_URL, AUTH_TOKEN_URL, AUTH_HOST_HEADER, AUTH_CLIENT_ID
+    service = os.getenv("SERVICE", "sem-classifier")
+    deploy_env = (
+        Path(__file__).resolve().parents[1]
+        / "services"
+        / service
+        / "generated"
+        / "dev"
+        / "deploy.env"
+    )
+    if not deploy_env.is_file():
+        return
+    for line in deploy_env.read_text(encoding="utf-8").splitlines():
+        if "=" not in line or line.startswith("#"):
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key, value)
+    api_port = os.environ.get("PF_PORT", "8080")
+    auth_port = os.environ.get("AUTHENTIK_PF_PORT", "9001")
+    BASE_URL = os.getenv("BASE_URL", f"http://localhost:{api_port}")
+    AUTH_TOKEN_URL = os.getenv(
+        "AUTH_TOKEN_URL",
+        f"http://localhost:{auth_port}/application/o/token/",
+    )
+    fqdn = os.environ.get(
+        "AUTHENTIK_HOST_FQDN",
+        "authentik-service.authentik-reusable-ml-services.svc.cluster.local",
+    )
+    AUTH_HOST_HEADER = os.getenv("AUTH_HOST_HEADER", f"{fqdn}:9000")
+    AUTH_CLIENT_ID = os.getenv("AUTH_CLIENT_ID", os.environ.get("OIDC_CLIENT_ID", ""))
+
+
+
+def _load_oidc_secret() -> None:
+    if os.getenv("AUTH_CLIENT_SECRET"):
+        return
+    service = os.getenv("SERVICE", "sem-classifier")
+    secrets_path = (
+        Path(__file__).resolve().parents[1]
+        / "services"
+        / service
+        / "secrets.local.yaml"
+    )
+    if not secrets_path.is_file():
+        return
+    for line in secrets_path.read_text(encoding="utf-8").splitlines():
+        m = re.match(r'^\s*oidc-client-secret:\s*"?(.*?)"?\s*$', line)
+        if m:
+            os.environ.setdefault("AUTH_CLIENT_SECRET", m.group(1).strip())
+            break
+
+
+_load_deploy_env()
+_load_oidc_secret()
 
 try:
     import pytest
@@ -36,13 +97,12 @@ except ImportError:
 
     pytest = _PytestCompat()
 
-BASE_URL = "http://localhost:8080"
-TOKEN_PROVIDER = os.getenv("TOKEN_PROVIDER", "mock")
-MOCK_TOKEN_URL = os.getenv("MOCK_TOKEN_URL", "http://localhost:18080/default/token")
-AUTH_TOKEN_URL = os.getenv("AUTH_TOKEN_URL", "")
-AUTH_CLIENT_ID = os.getenv("AUTH_CLIENT_ID", "")
+_load_deploy_env()
+
 AUTH_CLIENT_SECRET = os.getenv("AUTH_CLIENT_SECRET", "")
-AUTH_SCOPE = os.getenv("AUTH_SCOPE", "openid profile email")
+AUTH_SCOPE = os.getenv("AUTH_SCOPE", "openid profile")
+if not os.getenv("AUTH_CLIENT_ID") and os.getenv("OIDC_CLIENT_ID"):
+    AUTH_CLIENT_ID = os.environ["OIDC_CLIENT_ID"]
 
 
 # ============================================================================
@@ -51,39 +111,24 @@ AUTH_SCOPE = os.getenv("AUTH_SCOPE", "openid profile email")
 
 
 def get_token():
-    """Get a JWT from the configured token provider via client_credentials grant."""
-    if TOKEN_PROVIDER == "authentik":
-        assert AUTH_TOKEN_URL, (
-            "AUTH_TOKEN_URL is required when TOKEN_PROVIDER=authentik"
-        )
-        assert AUTH_CLIENT_ID, (
-            "AUTH_CLIENT_ID is required when TOKEN_PROVIDER=authentik"
-        )
-        assert AUTH_CLIENT_SECRET, (
-            "AUTH_CLIENT_SECRET is required when TOKEN_PROVIDER=authentik"
-        )
-        resp = requests.post(
-            AUTH_TOKEN_URL,
-            data={
-                "grant_type": "client_credentials",
-                "scope": AUTH_SCOPE,
-                "client_id": AUTH_CLIENT_ID,
-                "client_secret": AUTH_CLIENT_SECRET,
-            },
-            timeout=10,
-        )
-    else:
-        resp = requests.post(
-            MOCK_TOKEN_URL,
-            headers={"Host": "mock-oidc:8080"},
-            data={
-                "grant_type": "client_credentials",
-                "scope": "openid",
-                "client_id": "test-client",
-                "client_secret": "test-secret",
-            },
-            timeout=5,
-        )
+    """Get a JWT from Authentik via client_credentials grant."""
+    assert AUTH_CLIENT_SECRET, (
+        "AUTH_CLIENT_SECRET is required (set env or services/<id>/secrets.local.yaml)"
+    )
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    if AUTH_HOST_HEADER:
+        headers["Host"] = AUTH_HOST_HEADER
+    resp = requests.post(
+        AUTH_TOKEN_URL,
+        headers=headers,
+        data={
+            "grant_type": "client_credentials",
+            "scope": AUTH_SCOPE,
+            "client_id": AUTH_CLIENT_ID,
+            "client_secret": AUTH_CLIENT_SECRET,
+        },
+        timeout=10,
+    )
 
     assert resp.status_code == 200, (
         f"Token request failed: {resp.status_code} {resp.text}"
@@ -248,19 +293,13 @@ def main():
     print("SEM Classifier API — End-to-End Tests")
     print(f"Target: {BASE_URL}")
     print(f"{'=' * 60}\n")
-    print(f"[SETUP] Token provider: {TOKEN_PROVIDER}")
-
-    # Get a JWT for authenticated tests
-    print("[SETUP] Acquiring JWT for authenticated tests...")
+    print("[SETUP] Acquiring JWT from Authentik...")
     try:
         token = get_token()
         print(f"  OK: token acquired ({len(token)} chars)\n")
     except Exception as e:
         print(f"  FAILED: {e}")
-        if TOKEN_PROVIDER == "authentik":
-            print("  Check AUTH_TOKEN_URL, AUTH_CLIENT_ID, AUTH_CLIENT_SECRET")
-        else:
-            print("  Is mock-oidc port-forwarded? Run: ./dev.sh access")
+        print("  Set AUTH_CLIENT_SECRET and run: ./app.sh access")
         sys.exit(1)
 
     tests = [

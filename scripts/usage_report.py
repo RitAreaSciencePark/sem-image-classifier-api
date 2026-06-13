@@ -413,7 +413,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate API usage reports from in-cluster PostgreSQL."
     )
-    parser.add_argument("--namespace", default="sem-image-classifier")
+    parser.add_argument("--namespace", default="sem-classifier")
     parser.add_argument(
         "--since",
         default=None,

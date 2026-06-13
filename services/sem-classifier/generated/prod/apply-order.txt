@@ -1,0 +1,25 @@
+# Generated apply order for sem-classifier (prod)
+export NS=sem-classifier
+
+# 1. Secrets and BentoML config (use secrets.local.yaml outside repo in prod)
+kubectl apply -n "$NS" -f secrets.local.yaml  # or secrets.yaml.example filled
+kubectl apply -n "$NS" -f bentoml-config.yaml
+
+# 2. KrakenD ConfigMaps — from repo root:
+#    k8s/render-gateway-configmaps.sh --namespace $NS --gateway-settings gateway-settings.json --service-name sem-classifier
+
+# 3. Data layer
+kubectl apply -n "$NS" -f k8s/01-redis.yaml
+kubectl rollout status statefulset/redis -n "$NS" --timeout=120s
+kubectl apply -n "$NS" -f k8s/03-postgresql.yaml
+kubectl rollout status statefulset/postgresql -n "$NS" --timeout=120s
+
+# 4. Gateway + inference
+kubectl apply -n "$NS" -f k8s/04-krakend.yaml
+kubectl rollout status deployment/krakend -n "$NS" --timeout=300s
+kubectl apply -n "$NS" -f k8s/02-bentoml.yaml
+kubectl rollout status deployment/bentoml -n "$NS" --timeout=600s
+
+# 5. Autoscaling + ingress
+kubectl apply -n "$NS" -f k8s/07-hpa.yaml
+kubectl apply -n "$NS" -f k8s/05-ingress.yaml

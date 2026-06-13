@@ -1,0 +1,49 @@
+# Redis for Authentik sessions and worker queue.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authentik-redis
+  namespace: authentik-reusable-ml-services
+  labels:
+    app: authentik-redis
+    component: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: authentik-redis
+  template:
+    metadata:
+      labels:
+        app: authentik-redis
+        component: cache
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+              name: redis
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: authentik-redis
+  namespace: authentik-reusable-ml-services
+spec:
+  type: ClusterIP
+  selector:
+    app: authentik-redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+      protocol: TCP

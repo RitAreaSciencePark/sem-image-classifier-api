@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bentoml-config
+  labels:
+    app.kubernetes.io/name: bentoml
+    app.kubernetes.io/component: config
+data:
+  REDIS_HOST: redis-0.redis
+  REDIS_PORT: '6379'
+  JOB_TTL: '3600'
+  MODEL_SOURCE: private
+  MODEL_ID: t0m-R/vit-sem-scale-classifier
+  MODEL_REVISION: a20e54a100db0a8a4f9bba0356247bbe5d486593
+  MODEL_CACHE_DIR: /root/private-model-registry/sem-scale-cache
+  MODEL_LOCAL_FILES_ONLY: 'true'

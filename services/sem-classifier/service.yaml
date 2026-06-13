@@ -1,0 +1,22 @@
+service_id: sem-classifier
+display_name: SEM Classifier API
+
+model:
+  module: models.sem_classifier
+  class: SemClassifierService
+  bento_name: sem-classifier
+  source: hugging_face
+  id: t0m-R/vit-sem-classification
+  revision: 4d00fc90d2127ca2ce683703bfed07b4d8a25bb2
+  cache_dir: ""
+
+oidc:
+  application_slug: sem-classifier
+  client_id: sem-classifier-api
+  provider_name: sem-classifier-provider
+  app_display_name: "SEM Classifier API"
+
+dev_access:
+  api_port: 8080
+  authentik_port: 9001
+  authentik_https_port: 9443

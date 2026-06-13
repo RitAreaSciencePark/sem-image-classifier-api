@@ -1,0 +1,34 @@
+{
+  "port": 8080,
+  "timeout": "30s",
+  "backend_host": "http://bentoml:3000",
+  "service_name": "sem-scale-classifier",
+  "display_name": "SEM Scale Classifier API",
+  "auth": {
+    "provider": "authentik",
+    "alg": "RS256",
+    "jwk_url": "http://authentik-service.authentik-reusable-ml-services.svc.cluster.local:9000/application/o/sem-scale-classifier/jwks/",
+    "issuer": "http://authentik-service.authentik-reusable-ml-services.svc.cluster.local:9000/application/o/sem-scale-classifier/",
+    "audience": "sem-scale-classifier-api",
+    "disable_jwk_security": true,
+    "operation_debug": false,
+    "oidc_application_slug": "sem-scale-classifier",
+    "oidc_client_id": "sem-scale-classifier-api"
+  },
+  "plugin": {
+    "pattern": ".so",
+    "folder": "/etc/krakend/plugins",
+    "paths": [
+      "/api/v1/inference",
+      "/api/v1/jobs/status",
+      "/api/v1/jobs/results"
+    ]
+  },
+  "database": {
+    "host": "postgresql-0.postgresql",
+    "port": "5432",
+    "user": "krakend",
+    "password": "",
+    "dbname": "krakend"
+  }
+}

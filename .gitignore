@@ -13,7 +13,9 @@ build/
 .python-version
 
 # IDE
-.vscode/
+.vscode/*
+!.vscode/settings.json
+
 .idea/
 *.swp
 *.swo
@@ -39,11 +41,19 @@ internal_docs/
 
 # AI stack
 CLAUDE.md
+AGENTS.md
 .codex
 
 # Local k8s files
+k8s/.env
 k8s/releases/
 k8s/access.log
+
+# Per-service local operator files
+services/*/prod.overlay.yaml
+services/*/secrets.local.yaml
+services/*/gateway-settings.local.json
+services/*/releases/
 
 # Usage report
 usage-report.html

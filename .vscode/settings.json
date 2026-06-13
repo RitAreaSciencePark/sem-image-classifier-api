@@ -1,0 +1,9 @@
+{
+  "yaml.schemas": {
+    "ml_platform/schemas/prod-overlay.schema.json": [
+      "services/*/prod.overlay.yaml",
+      "services/*/prod.overlay.yaml.example"
+    ]
+  },
+  "yaml.schemaStore.enable": true
+}

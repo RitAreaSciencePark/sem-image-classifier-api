@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.4
 
 # ============================================================================
-# Multi-Stage Containerfile for SEM image classifier BentoML service
+# Multi-Stage Containerfile for SEM classifier API BentoML service
 # ============================================================================
 #
 # WHY NOT `bentoml containerize`?
@@ -10,14 +10,14 @@
 # A plain Containerfile is transparent, reproducible, and universal.
 #
 # BUILD:
-#   Prefer: ./k8s/dev.sh build --env dev|prod
+#   Prefer: ./k8s/app.sh build-image
 #   Manual: podman build \
 #     --build-arg MODEL_SOURCE=hugging_face|private \
 #     --build-arg MODEL_ID=<huggingface-repo> \
 #     --build-arg MODEL_REVISION=<tag-or-commit> \  # required for hugging_face, optional for private
 #     --build-context model_cache=<absolute-path-to-hf-cache-root-or-hub-dir> \
-#     --build-arg BENTOML_SERVICE=service:SEMInferenceRedisService \
-#     -t localhost/sem-image-classifier:latest -f Containerfile .
+#     --build-arg BENTOML_SERVICE=models.sem_classifier:SemClassifierService \
+#     -t ghcr.io/<owner>/sem-classifier:latest -f Containerfile .
 #
 # IMAGE SIZE BREAKDOWN (approximate):
 #   python:3.12-slim base  ~150MB
@@ -40,7 +40,7 @@ ARG MODEL_ID
 ARG MODEL_REVISION
 ARG MODEL_SOURCE="hugging_face"
 ARG HF_BUILD_CACHE_DIR="/tmp/huggingface"
-ARG BENTOML_SERVICE="service:SEMInferenceRedisService"
+ARG BENTOML_SERVICE="models.sem_classifier:SemClassifierService"
 
 FROM python:3.12-slim AS builder
 
@@ -144,8 +144,9 @@ COPY --from=builder /app/.venv /app/.venv
 # Builder cache source is configurable via HF_BUILD_CACHE_DIR.
 COPY --from=builder ${HF_BUILD_CACHE_DIR} /root/.cache/huggingface
 
-# Copy application source code
-COPY src/*.py ./
+# Copy application source (core pipeline + model implementations).
+COPY src/core/ ./core/
+COPY src/models/ ./models/
 
 # Add venv to PATH so `bentoml` command is available
 ENV PATH="/app/.venv/bin:$PATH"
@@ -154,6 +155,6 @@ ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 3000
 
 # Start the configured BentoML service.
-# BENTOML_SERVICE defaults to service:SEMInferenceRedisService, but dev.sh can
+# BENTOML_SERVICE defaults to service:SEMInferenceRedisService, but app.sh can
 # pass another entrypoint when adapting the repo to a different model.
 CMD ["sh", "-c", "exec bentoml serve \"$BENTOML_SERVICE\" --host 0.0.0.0 --port 3000"]

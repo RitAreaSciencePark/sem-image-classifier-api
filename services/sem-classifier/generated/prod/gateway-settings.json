@@ -1,0 +1,34 @@
+{
+  "port": 8080,
+  "timeout": "30s",
+  "backend_host": "http://bentoml:3000",
+  "service_name": "sem-classifier",
+  "display_name": "SEM Classifier API",
+  "auth": {
+    "provider": "authentik",
+    "alg": "RS256",
+    "jwk_url": "https://auth.areasciencepark.it/application/o/sem-classifier/jwks/",
+    "issuer": "https://auth.areasciencepark.it/application/o/sem-classifier/",
+    "audience": "sem-classifier-api",
+    "disable_jwk_security": false,
+    "operation_debug": false,
+    "oidc_application_slug": "sem-classifier",
+    "oidc_client_id": "sem-classifier-api"
+  },
+  "plugin": {
+    "pattern": ".so",
+    "folder": "/etc/krakend/plugins",
+    "paths": [
+      "/api/v1/inference",
+      "/api/v1/jobs/status",
+      "/api/v1/jobs/results"
+    ]
+  },
+  "database": {
+    "host": "postgresql-0.postgresql",
+    "port": "5432",
+    "user": "krakend",
+    "password": "",
+    "dbname": "krakend"
+  }
+}

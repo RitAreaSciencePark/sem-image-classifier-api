@@ -1,0 +1,28 @@
+# Production public route for the KrakenD API gateway.
+# Not applied by ./app.sh deploy — production operators apply manually
+# (same pattern as s3bucket 04-ingress.yaml).
+#
+# Replace the host with your production hostname before applying.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sem-classifier.areasciencepark.it
+  namespace: sem-classifier
+  labels:
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/component: ingress
+spec:
+  ingressClassName: haproxy-4
+  rules:
+    - host: sem-classifier.areasciencepark.it
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: krakend
+                port:
+                  number: 8080
+

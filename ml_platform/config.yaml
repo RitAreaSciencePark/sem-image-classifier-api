@@ -1,0 +1,5 @@
+# Shared platform defaults (not per-service).
+# Change ghcr_owner when publishing images under a different GitHub account.
+infra_namespace: authentik-reusable-ml-services
+ghcr_owner: luisfpal
+registry_scheme: https

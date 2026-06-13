@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import os
 import random
 import statistics
 import time
@@ -45,22 +46,29 @@ def parse_users(value: str) -> list[str]:
     return users
 
 
-def get_mock_token(mock_token_url: str, user: str, timeout: float) -> str:
+def get_authentik_token(
+    token_url: str,
+    client_id: str,
+    client_secret: str,
+    host_header: str,
+    timeout: float,
+) -> str:
+    headers = {"Host": host_header} if host_header else {}
     response = requests.post(
-        mock_token_url,
-        headers={"Host": "mock-oidc:8080"},
+        token_url,
+        headers=headers,
         data={
             "grant_type": "client_credentials",
-            "scope": "openid",
-            "client_id": user,
-            "client_secret": "test-secret",
+            "scope": "openid profile",
+            "client_id": client_id,
+            "client_secret": client_secret,
         },
         timeout=timeout,
     )
     response.raise_for_status()
     token = response.json().get("access_token")
     if not token:
-        raise RuntimeError(f"token response for user={user} had no access_token")
+        raise RuntimeError("token response had no access_token")
     return token
 
 
@@ -214,7 +222,16 @@ def main() -> int:
     )
     parser.add_argument("--base-url", default="http://localhost:8080")
     parser.add_argument(
-        "--mock-token-url", default="http://localhost:18080/default/token"
+        "--auth-token-url",
+        default="http://localhost:9001/application/o/token/",
+    )
+    parser.add_argument("--auth-client-id", default="sem-classifier-api")
+    parser.add_argument(
+        "--auth-client-secret", default=os.environ.get("AUTH_CLIENT_SECRET", "")
+    )
+    parser.add_argument(
+        "--auth-host-header",
+        default="authentik-service.authentik-reusable-ml-services.svc.cluster.local:9000",
     )
     parser.add_argument(
         "--users", type=parse_users, default=parse_users("alice,bob,charlie")
@@ -229,9 +246,20 @@ def main() -> int:
     parser.add_argument("--image-url", default=DEFAULT_IMAGE_URL)
     args = parser.parse_args()
 
+    if not args.auth_client_secret:
+        raise SystemExit(
+            "AUTH_CLIENT_SECRET or --auth-client-secret is required for Authentik tokens"
+        )
+
     print(f"Acquiring tokens for {len(args.users)} users...")
     tokens = {
-        user: get_mock_token(args.mock_token_url, user, args.timeout)
+        user: get_authentik_token(
+            args.auth_token_url,
+            args.auth_client_id,
+            args.auth_client_secret,
+            args.auth_host_header,
+            args.timeout,
+        )
         for user in args.users
     }
 

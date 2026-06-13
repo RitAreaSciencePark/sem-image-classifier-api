@@ -1,0 +1,11 @@
+# Namespace for Authentik identity infrastructure.
+# Kept separate from the app namespace to emulate production, where Authentik
+# is provisioned by infrastructure administrators independently of the API.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: authentik-reusable-ml-services
+  labels:
+    name: authentik-reusable-ml-services
+    app.kubernetes.io/name: authentik-reusable-ml-services
+    kubernetes.io/metadata.name: authentik-reusable-ml-services

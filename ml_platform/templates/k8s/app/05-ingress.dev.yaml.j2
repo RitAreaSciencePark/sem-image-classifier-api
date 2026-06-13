@@ -1,0 +1,33 @@
+# Development Ingress — routes all traffic through the haproxy-4 Ingress controller
+# regardless of the Host header. Works via Ingress NodePort or any hostname without TLS.
+#
+# How it differs from 05-ingress.yaml (production):
+#   Production: host: {{ namespace }}.areasciencepark.it — hostname-specific, requires
+#               DNS and TLS configured by cluster administrators.
+#   Dev:        no host field = catch-all — accepts any hostname, no TLS needed.
+#
+# Applied by app.sh automatically when ingressClassName haproxy-4 exists in the cluster.
+# Not applied in production — production uses 05-ingress.yaml only.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ namespace }}-dev
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/component: ingress
+    environment: dev
+spec:
+  ingressClassName: haproxy-4
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: krakend
+                port:
+                  number: 8080
+

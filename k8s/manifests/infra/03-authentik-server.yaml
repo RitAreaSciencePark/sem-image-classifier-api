@@ -1,0 +1,209 @@
+# Authentik server/worker deployment and internal service.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mime-types
+  namespace: authentik-reusable-ml-services
+data:
+  mime.types: |
+    text/html                             html htm shtml
+    text/css                              css
+    text/xml                              xml
+    text/plain                            txt
+    text/javascript                       js mjs
+    application/json                      json
+    application/javascript                js
+    application/xml                       xml
+    application/pdf                       pdf
+    application/zip                       zip
+    application/octet-stream              bin exe dll
+    application/x-font-ttf               ttf
+    application/x-font-woff              woff
+    application/font-woff2               woff2
+    image/gif                             gif
+    image/jpeg                            jpeg jpg
+    image/png                             png
+    image/svg+xml                         svg svgz
+    image/webp                            webp
+    image/x-icon                          ico
+    font/woff                             woff
+    font/woff2                            woff2
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authentik-server
+  namespace: authentik-reusable-ml-services
+  labels:
+    app: authentik-server
+    component: server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: authentik-server
+  template:
+    metadata:
+      labels:
+        app: authentik-server
+        component: server
+    spec:
+      volumes:
+        - name: mime-types-vol
+          configMap:
+            name: mime-types
+      containers:
+        - name: authentik
+          image: ghcr.io/goauthentik/server:2024.8.1
+          args: ["server"]
+          volumeMounts:
+            - name: mime-types-vol
+              mountPath: /etc/mime.types
+              subPath: mime.types
+          env:
+            - name: AUTHENTIK_POSTGRESQL__HOST
+              value: "authentik-postgres"
+            - name: AUTHENTIK_POSTGRESQL__NAME
+              value: "authentik"
+            - name: AUTHENTIK_POSTGRESQL__USER
+              value: "authentik"
+            - name: AUTHENTIK_POSTGRESQL__PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: authentik-secret
+                  key: postgres-password
+            - name: AUTHENTIK_REDIS__HOST
+              value: "authentik-redis"
+            - name: AUTHENTIK_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: authentik-secret
+                  key: secret-key
+            - name: AUTHENTIK_BOOTSTRAP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: authentik-secret
+                  key: bootstrap-password
+            - name: AUTHENTIK_BOOTSTRAP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: authentik-secret
+                  key: bootstrap-token
+            - name: AUTHENTIK_ERROR_REPORTING__ENABLED
+              value: "false"
+            - name: AUTHENTIK_LISTEN__HTTP
+              value: "0.0.0.0:9000"
+            - name: AUTHENTIK_LISTEN__HTTPS
+              value: "0.0.0.0:9443"
+          ports:
+            - containerPort: 9000
+              name: http
+              protocol: TCP
+            - containerPort: 9443
+              name: https
+              protocol: TCP
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /-/health/live/
+              port: 9000
+            initialDelaySeconds: 120
+            periodSeconds: 10
+            failureThreshold: 10
+          readinessProbe:
+            httpGet:
+              path: /-/health/ready/
+              port: 9000
+            initialDelaySeconds: 120
+            periodSeconds: 10
+            failureThreshold: 10
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authentik-worker
+  namespace: authentik-reusable-ml-services
+  labels:
+    app: authentik-worker
+    component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: authentik-worker
+  template:
+    metadata:
+      labels:
+        app: authentik-worker
+        component: worker
+    spec:
+      volumes:
+        - name: mime-types-vol
+          configMap:
+            name: mime-types
+      containers:
+        - name: authentik
+          image: ghcr.io/goauthentik/server:2024.8.1
+          args: ["worker"]
+          volumeMounts:
+            - name: mime-types-vol
+              mountPath: /etc/mime.types
+              subPath: mime.types
+          env:
+            - name: AUTHENTIK_POSTGRESQL__HOST
+              value: "authentik-postgres"
+            - name: AUTHENTIK_POSTGRESQL__NAME
+              value: "authentik"
+            - name: AUTHENTIK_POSTGRESQL__USER
+              value: "authentik"
+            - name: AUTHENTIK_POSTGRESQL__PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: authentik-secret
+                  key: postgres-password
+            - name: AUTHENTIK_REDIS__HOST
+              value: "authentik-redis"
+            - name: AUTHENTIK_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: authentik-secret
+                  key: secret-key
+            - name: AUTHENTIK_ERROR_REPORTING__ENABLED
+              value: "false"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: authentik-service
+  namespace: authentik-reusable-ml-services
+  labels:
+    app: authentik
+spec:
+  type: ClusterIP
+  selector:
+    app: authentik-server
+  ports:
+    - name: http
+      port: 9000
+      targetPort: 9000
+      protocol: TCP
+    - name: https
+      port: 9443
+      targetPort: 9443
+      protocol: TCP

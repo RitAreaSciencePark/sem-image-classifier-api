@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=../../ml_platform/schemas/prod-overlay.schema.json
+kubernetes:
+  namespace: sem-classifier
+
+auth:
+  mode: external
+  jwk_url: REPLACE_WITH_HTTPS_JWKS_URL
+  issuer: REPLACE_WITH_HTTPS_ISSUER
+  disable_jwk_security: false
+  operation_debug: false
+
+ingress:
+  enabled: true
+  host: sem-classifier.areasciencepark.it
+  ingress_class: haproxy-4
+
+image:
+  registry: ghcr.io/luisfpal
+  tag: latest
+  digest: ""
+
+registry:
+  ghcr_owner: luisfpal
