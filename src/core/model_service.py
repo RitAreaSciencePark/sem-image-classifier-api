@@ -7,7 +7,7 @@ import signal
 import threading
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import bentoml
 from pydantic import BaseModel, Field
@@ -70,10 +70,16 @@ class QueueStatsResponse(BaseModel):
     queue_size: int
 
 
+# Worker tuning from BentoML ConfigMap (ml_platform/config.yaml → render).
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 JOB_TTL = int(os.getenv("JOB_TTL", "3600"))
+INFERENCE_BATCH_SIZE = max(1, int(os.getenv("INFERENCE_BATCH_SIZE", "16")))
+INFERENCE_BATCH_MAX_WAIT_MS = max(
+    0, int(os.getenv("INFERENCE_BATCH_MAX_WAIT_MS", "100"))
+)
+WORKER_POLL_INTERVAL_MS = max(1, int(os.getenv("WORKER_POLL_INTERVAL_MS", "50")))
 
 
 class BaseAsyncModelService(ABC):
@@ -114,6 +120,12 @@ class BaseAsyncModelService(ABC):
     def _run_model_inference(self, inference_input: Any) -> BaseModel | Dict[str, Any]:
         """Run model inference and return a JSON-serializable result."""
 
+    def _run_model_inference_batch(
+        self, inference_inputs: List[Any]
+    ) -> List[BaseModel | Dict[str, Any]]:
+        """Run inference for a batch; default falls back to sequential singles."""
+        return [self._run_model_inference(item) for item in inference_inputs]
+
     def _serialize_result(self, result: BaseModel | Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(result, BaseModel):
             return result.model_dump()
@@ -127,6 +139,11 @@ class BaseAsyncModelService(ABC):
         self, inference_input: Any, metadata: Optional[Dict[str, Any]] = None
     ) -> JobSubmitResponse:
         payload = self._serialize_inference_input(inference_input)
+        return self._submit_raw_payload(payload, metadata=metadata)
+
+    def _submit_raw_payload(
+        self, payload: str, metadata: Optional[Dict[str, Any]] = None
+    ) -> JobSubmitResponse:
         job_id = self.job_queue.submit_job(payload, metadata=metadata)
         return JobSubmitResponse(
             job_id=job_id,
@@ -137,15 +154,91 @@ class BaseAsyncModelService(ABC):
             ),
         )
 
+    def _collect_job_batch(self) -> List[Tuple[str, str, Dict]]:
+        """Collect up to INFERENCE_BATCH_SIZE jobs within max wait window."""
+        batch: List[Tuple[str, str, Dict]] = []
+        first = self._wait_for_next_job()
+        if first is None:
+            return batch
+        batch.append(first)
+        if INFERENCE_BATCH_SIZE <= 1:
+            return batch
+
+        deadline = time.monotonic() + (INFERENCE_BATCH_MAX_WAIT_MS / 1000.0)
+        while len(batch) < INFERENCE_BATCH_SIZE and time.monotonic() < deadline:
+            next_job = self.job_queue.get_next_pending_job()
+            if next_job is None:
+                time.sleep(WORKER_POLL_INTERVAL_MS / 1000.0)
+                continue
+            batch.append(next_job)
+        return batch
+
+    def _wait_for_next_job(self) -> Optional[Tuple[str, str, Dict]]:
+        while not self._shutting_down:
+            next_job = self.job_queue.get_next_pending_job()
+            if next_job is not None:
+                return next_job
+            time.sleep(WORKER_POLL_INTERVAL_MS / 1000.0)
+        return None
+
+    def _process_job_batch(self, batch: List[Tuple[str, str, Dict]]) -> None:
+        job_ids = [item[0] for item in batch]
+        payloads = [item[1] for item in batch]
+        logger.info("Processing batch of %d jobs: %s", len(batch), job_ids[:5])
+
+        resolved_inputs: List[Any] = []
+        per_job_error: Dict[int, str] = {}
+
+        for index, payload in enumerate(payloads):
+            try:
+                resolved_inputs.append(self._deserialize_inference_input(payload))
+            except Exception as exc:
+                per_job_error[index] = f"{type(exc).__name__}: {exc}"
+
+        valid_indices = [i for i in range(len(batch)) if i not in per_job_error]
+        valid_inputs = [resolved_inputs[i] for i in valid_indices]
+
+        batch_results: Dict[int, BaseModel | Dict[str, Any]] = {}
+        if valid_inputs:
+            try:
+                outputs = self._run_model_inference_batch(valid_inputs)
+                if len(outputs) != len(valid_inputs):
+                    raise RuntimeError(
+                        f"Batch inference returned {len(outputs)} results for "
+                        f"{len(valid_inputs)} inputs"
+                    )
+                for offset, index in enumerate(valid_indices):
+                    batch_results[index] = outputs[offset]
+            except Exception as exc:
+                error_msg = f"{type(exc).__name__}: {exc}"
+                logger.error("Batch inference failed: %s", error_msg)
+                for index in valid_indices:
+                    per_job_error[index] = error_msg
+
+        for index, (job_id, _, _) in enumerate(batch):
+            if index in per_job_error:
+                self.job_queue.mark_job_failed(job_id, per_job_error[index])
+                continue
+            result = batch_results.get(index)
+            if result is None:
+                self.job_queue.mark_job_failed(job_id, "Missing batch result")
+                continue
+            self.job_queue.mark_job_completed(job_id, self._serialize_result(result))
+
+        self.job_queue.maybe_reconcile_stats()
+
     def _start_background_worker(self) -> None:
         def background_worker():
-            logger.info("Background worker started")
+            logger.info(
+                "Background worker started (batch_size=%d max_wait_ms=%d poll_ms=%d)",
+                INFERENCE_BATCH_SIZE,
+                INFERENCE_BATCH_MAX_WAIT_MS,
+                WORKER_POLL_INTERVAL_MS,
+            )
             idle_cycles = 0
             while not self._shutting_down:
-                next_job = self.job_queue.get_next_pending_job()
-
-                if next_job is None:
-                    time.sleep(0.1)
+                batch = self._collect_job_batch()
+                if not batch:
                     idle_cycles += 1
                     if idle_cycles >= 60:
                         idle_cycles = 0
@@ -153,19 +246,7 @@ class BaseAsyncModelService(ABC):
                     continue
 
                 idle_cycles = 0
-                job_id, payload, metadata = next_job
-                logger.info("Processing job %s", job_id)
-
-                try:
-                    inference_input = self._deserialize_inference_input(payload)
-                    result = self._run_model_inference(inference_input)
-                    self.job_queue.mark_job_completed(
-                        job_id, self._serialize_result(result)
-                    )
-                except Exception as exc:
-                    error_msg = f"{type(exc).__name__}: {str(exc)}"
-                    logger.error("Job %s failed: %s", job_id, error_msg)
-                    self.job_queue.mark_job_failed(job_id, error_msg)
+                self._process_job_batch(batch)
 
             logger.info("Worker thread exiting cleanly")
 
@@ -243,4 +324,8 @@ class BaseAsyncModelService(ABC):
             "device": getattr(self, "device", None),
             "redis_connected": redis_healthy,
             "queue": stats,
+            "worker": {
+                "batch_size": INFERENCE_BATCH_SIZE,
+                "batch_max_wait_ms": INFERENCE_BATCH_MAX_WAIT_MS,
+            },
         }

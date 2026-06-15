@@ -4,6 +4,8 @@
   "backend_host": "http://bentoml:3000",
   "service_name": "sem-scale-classifier",
   "display_name": "SEM Scale Classifier API",
+  "inference_rate_limit": 500,
+  "inference_rate_capacity": 500,
   "auth": {
     "provider": "authentik",
     "alg": "RS256",

@@ -3,23 +3,23 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+_repo_root = Path(__file__).resolve().parents[2]
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
 import argparse
 import concurrent.futures
-import os
 import random
 import statistics
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any
 
-import requests
-
-DEFAULT_IMAGE_URL = (
-    "https://enif.unl.edu/sites/unl.edu.research.nebraska-center-for-materials-"
-    "and-nanoscience.electron-nanoscopy/files/styles/no_crop_720/public/media/"
-    "image/NanoSEM_15KV.jpg?itok=McoSOeAv"
-)
+from ml_platform.devtools.api_client import DEFAULT_IMAGE_URL, InferenceClient, get_token, post_json
+from ml_platform.devtools.cli import add_service_arguments, resolve_service_context
 
 
 @dataclass
@@ -46,60 +46,6 @@ def parse_users(value: str) -> list[str]:
     return users
 
 
-def get_authentik_token(
-    token_url: str,
-    client_id: str,
-    client_secret: str,
-    host_header: str,
-    timeout: float,
-) -> str:
-    headers = {"Host": host_header} if host_header else {}
-    response = requests.post(
-        token_url,
-        headers=headers,
-        data={
-            "grant_type": "client_credentials",
-            "scope": "openid profile",
-            "client_id": client_id,
-            "client_secret": client_secret,
-        },
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    token = response.json().get("access_token")
-    if not token:
-        raise RuntimeError("token response had no access_token")
-    return token
-
-
-def auth_headers(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
-
-
-def post_json(
-    url: str, token: str, body: dict[str, Any], timeout: float
-) -> requests.Response:
-    return requests.post(url, json=body, headers=auth_headers(token), timeout=timeout)
-
-
-def poll_job(base_url: str, token: str, job_id: str, timeout: float) -> str:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        response = post_json(
-            f"{base_url}/api/v1/jobs/status",
-            token,
-            {"job_id": job_id},
-            min(5.0, timeout),
-        )
-        if response.status_code != 200:
-            return f"poll_http_{response.status_code}"
-        status = response.json().get("status", "UNKNOWN")
-        if status in {"COMPLETED", "FAILED", "NOT_FOUND"}:
-            return status
-        time.sleep(0.5)
-    return "POLL_TIMEOUT"
-
-
 def run_one(
     *,
     index: int,
@@ -117,23 +63,21 @@ def run_one(
     started = time.perf_counter()
     try:
         if selected_mode == "inference":
-            response = post_json(
-                f"{base_url}/api/v1/inference",
-                token,
-                {"image_url": image_url},
-                timeout,
-            )
-            detail = response.text[:160]
-            if response.status_code == 200:
-                job_id = response.json().get("job_id", "")
-                detail = f"job_id={job_id}"
-                if poll and job_id:
-                    detail += f" poll={poll_job(base_url, token, job_id, timeout)}"
+            client = InferenceClient(base_url, token, default_timeout=timeout)
+            submit = client.submit(image_url, timeout=timeout)
+            detail = submit.error[:160] if submit.error else ""
+            if submit.status_code == 200 and submit.job_id:
+                detail = f"job_id={submit.job_id}"
+                if poll:
+                    poll_status = client.poll_until_done(
+                        submit.job_id, timeout=timeout
+                    ).status
+                    detail += f" poll={poll_status}"
             return Result(
                 user,
                 selected_mode,
-                response.status_code,
-                response.ok,
+                submit.status_code,
+                submit.status_code == 200,
                 time.perf_counter() - started,
                 detail,
             )
@@ -141,7 +85,7 @@ def run_one(
         fake_job_id = str(uuid.uuid4())
         endpoint = "status" if selected_mode == "status" else "results"
         response = post_json(
-            f"{base_url}/api/v1/jobs/{endpoint}",
+            f"{base_url.rstrip('/')}/api/v1/jobs/{endpoint}",
             token,
             {"job_id": fake_job_id},
             timeout,
@@ -220,19 +164,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Generate authenticated traffic against the Model Inference Service API."
     )
-    parser.add_argument("--base-url", default="http://localhost:8080")
-    parser.add_argument(
-        "--auth-token-url",
-        default="http://localhost:9001/application/o/token/",
-    )
-    parser.add_argument("--auth-client-id", default="sem-classifier-api")
-    parser.add_argument(
-        "--auth-client-secret", default=os.environ.get("AUTH_CLIENT_SECRET", "")
-    )
-    parser.add_argument(
-        "--auth-host-header",
-        default="authentik-service.authentik-reusable-ml-services.svc.cluster.local:9000",
-    )
+    add_service_arguments(parser)
     parser.add_argument(
         "--users", type=parse_users, default=parse_users("alice,bob,charlie")
     )
@@ -246,19 +178,21 @@ def main() -> int:
     parser.add_argument("--image-url", default=DEFAULT_IMAGE_URL)
     args = parser.parse_args()
 
-    if not args.auth_client_secret:
+    ctx = resolve_service_context(args)
+
+    if not ctx.auth_client_secret:
         raise SystemExit(
             "AUTH_CLIENT_SECRET or --auth-client-secret is required for Authentik tokens"
         )
 
     print(f"Acquiring tokens for {len(args.users)} users...")
     tokens = {
-        user: get_authentik_token(
-            args.auth_token_url,
-            args.auth_client_id,
-            args.auth_client_secret,
-            args.auth_host_header,
-            args.timeout,
+        user: get_token(
+            ctx.auth_token_url,
+            ctx.auth_client_id,
+            ctx.auth_client_secret,
+            ctx.auth_host_header,
+            timeout=args.timeout,
         )
         for user in args.users
     }
@@ -277,7 +211,7 @@ def main() -> int:
                 executor.submit(
                     run_one,
                     index=index,
-                    base_url=args.base_url.rstrip("/"),
+                    base_url=ctx.base_url,
                     user=user,
                     token=tokens[user],
                     mode=args.mode,

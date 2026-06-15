@@ -1,7 +1,7 @@
 [project]
 name = "sem-classifier-api"
 version = "1.0.0"
-description = "Async SEM image classifier API with BentoML, Redis, and KrakenD"
+description = "Codegen-driven async ML API platform on Kubernetes (BentoML, Redis, KrakenD)"
 license = "EUPL-1.2-or-later"
 authors = [
     { name = "Luis Fernando Palacios Flores" },
@@ -38,6 +38,13 @@ dependencies = [
 # CPU-only PyTorch index — saves ~1.8GB in image size.
 # Remove this section to get full torch with CUDA stubs.
 extra-index-url = ["https://download.pytorch.org/whl/cpu"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit", "tests/e2e"]
+pythonpath = ["."]
+markers = [
+    "e2e: requires live cluster and port-forward",
+]
 
 [tool.mypy]
 disable_error_code = ["import-untyped"]

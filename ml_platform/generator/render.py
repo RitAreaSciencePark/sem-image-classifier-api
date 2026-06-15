@@ -13,6 +13,7 @@ import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from ml_platform.generator.derive import build_context, load_yaml
+from ml_platform.usage_report.sql import build_sql_template
 
 
 def _repo_root() -> Path:
@@ -105,6 +106,11 @@ def _write_bentoml_config(out_dir: Path, ctx: dict) -> None:
             "MODEL_REVISION": ctx["model_revision"],
             "MODEL_CACHE_DIR": ctx["model_cache_dir"],
             "MODEL_LOCAL_FILES_ONLY": "true",
+            "INFERENCE_BATCH_SIZE": str(ctx["worker"]["inference_batch_size"]),
+            "INFERENCE_BATCH_MAX_WAIT_MS": str(
+                ctx["worker"]["inference_batch_max_wait_ms"]
+            ),
+            "WORKER_POLL_INTERVAL_MS": str(ctx["worker"]["worker_poll_interval_ms"]),
         },
     }
     _write_text(out_dir / "bentoml-config.yaml", yaml.safe_dump(doc, sort_keys=False))
@@ -182,8 +188,34 @@ def _write_preflight(out_dir: Path, ctx: dict, env: str) -> None:
 - [ ] `curl -fsS http://localhost:{ctx['api_port']}/__health` (dev port-forward)
 - [ ] `./k8s/app.sh --service {ctx['service_id']} token` returns JWT (dev)
 - [ ] `make test-service SERVICE={ctx['service_id']}` passes (dev)
+- [ ] Usage reports: `cd usage-report && ./run.sh --namespace {ctx['namespace']}`
 """
     _write_text(out_dir / "preflight-checklist.md", content)
+
+
+def _write_usage_report_tools(out_dir: Path, ctx: dict, repo_root: Path) -> None:
+    template_dir = repo_root / "ml_platform" / "templates" / "usage-report"
+    ur_out = out_dir / "usage-report"
+    ur_out.mkdir(parents=True, exist_ok=True)
+
+    for name in ("run.sh", "README.md"):
+        src = template_dir / name
+        dest = ur_out / name
+        shutil.copy2(src, dest)
+        if name == "run.sh":
+            dest.chmod(0o755)
+
+    _write_text(ur_out / "report.sql", build_sql_template() + "\n")
+    _write_text(ur_out / "deploy.env", f'NAMESPACE="{ctx["namespace"]}"\n')
+
+    py_src = repo_root / "scripts" / "reports" / "usage_report.py"
+    if py_src.is_file():
+        shutil.copy2(py_src, ur_out / "usage_report.py")
+
+    for mod in ("sql.py", "names.py"):
+        src = repo_root / "ml_platform" / "usage_report" / mod
+        if src.is_file():
+            shutil.copy2(src, ur_out / mod)
 
 
 def render_service(service_id: str, env: str) -> Path:
@@ -245,6 +277,7 @@ def render_service(service_id: str, env: str) -> Path:
     _write_deploy_env(out_dir, ctx)
     _write_apply_order(out_dir, ctx, env)
     _write_preflight(out_dir, ctx, env)
+    _write_usage_report_tools(out_dir, ctx, repo_root)
 
     lock = _compute_lock(service_yaml, overlay_path if overlay_path.is_file() else None, env)
     _write_text(out_dir / "service.lock", lock + "\n")

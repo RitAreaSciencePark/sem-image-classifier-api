@@ -13,3 +13,4 @@
 - [ ] `curl -fsS http://localhost:8080/__health` (dev port-forward)
 - [ ] `./k8s/app.sh --service sem-classifier token` returns JWT (dev)
 - [ ] `make test-service SERVICE=sem-classifier` passes (dev)
+- [ ] Usage reports: `cd usage-report && ./run.sh --namespace sem-classifier`

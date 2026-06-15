@@ -22,6 +22,15 @@ def validate_service(service_id: str) -> None:
         if key not in data:
             raise ValueError(f"Missing required key in service.yaml: {key}")
 
+    k8s = data.get("kubernetes") or {}
+    if not k8s.get("namespace"):
+        raise ValueError("Missing kubernetes.namespace in service.yaml (dev cluster namespace)")
+
+    dev_access = data.get("dev_access") or {}
+    for key in ("api_port", "authentik_port", "authentik_https_port"):
+        if key not in dev_access:
+            raise ValueError(f"Missing dev_access.{key} in service.yaml")
+
     model = data["model"]
     for key in ("module", "class", "bento_name", "source", "id"):
         if key not in model:

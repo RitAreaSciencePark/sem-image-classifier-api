@@ -1,5 +1,6 @@
-# HPA for BentoML based on CPU utilization.
+# HPA for BentoML based on CPU utilization (queue workers; one inference thread per pod).
 
+{% if autoscaling.enabled %}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -13,26 +14,27 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: bentoml
-  minReplicas: 1
-  maxReplicas: 3
+  minReplicas: {{ autoscaling.min_replicas }}
+  maxReplicas: {{ autoscaling.max_replicas }}
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 70
+          averageUtilization: {{ autoscaling.cpu_target_percent }}
   behavior:
     scaleUp:
-      stabilizationWindowSeconds: 60
+      stabilizationWindowSeconds: {{ autoscaling.scale_up_stabilization_seconds }}
       policies:
         - type: Pods
-          value: 1
-          periodSeconds: 60
+          value: {{ autoscaling.scale_up_pods_per_period }}
+          periodSeconds: {{ autoscaling.scale_up_period_seconds }}
+      selectPolicy: Max
     scaleDown:
-      stabilizationWindowSeconds: 300
+      stabilizationWindowSeconds: {{ autoscaling.scale_down_stabilization_seconds }}
       policies:
         - type: Pods
-          value: 1
-          periodSeconds: 120
-
+          value: {{ autoscaling.scale_down_pods_per_period }}
+          periodSeconds: {{ autoscaling.scale_down_period_seconds }}
+{% endif %}

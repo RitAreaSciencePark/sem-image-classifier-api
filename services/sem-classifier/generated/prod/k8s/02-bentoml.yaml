@@ -69,10 +69,10 @@ spec:
 
           resources:
             requests:
-              cpu: 200m
+              cpu: 1000m
               memory: 512Mi
             limits:
-              cpu: "2"
+              cpu: 2
               memory: 2Gi
 
           # Startup probe guards against false restarts during model load.

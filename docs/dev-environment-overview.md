@@ -1,175 +1,169 @@
 # Development Environment: Stencil Virtual Datacenter
 
-## Why This Exists
+## Why this exists
 
-Building and testing an API that uses Kubernetes, JWT validation, and async job queues correctly requires running those systems for real — not with mocks. Mocks of distributed scheduling, OIDC token validation, and gateway proxy behavior hide entire classes of production bugs.
+Building and testing an API with Kubernetes, JWT validation, and async job queues requires running those systems for real — not mocks. Mocks hide failures in scheduling, OIDC validation, and gateway proxy behavior.
 
-The problem is that a real deployment requires multiple physical servers: at least three Kubernetes nodes and an identity server. That is not practical for a single developer during an internship.
+A realistic deployment needs multiple nodes and an identity server. **Stencil** runs a full virtual datacenter on one physical machine: KVM VMs running the same K3s, Ceph, and FreeIPA stack used in production datacenters.
 
-**Stencil** solves this by running a complete virtual datacenter on one physical machine. Each server becomes a KVM virtual machine. The software inside — K3s, Ceph, FreeIPA — is the same software that runs in real datacenters. The VMs do not know they are virtual.
+This platform was developed and validated in Stencil before production handoff. The **same generator output** (`services/<id>/generated/`) targets dev (automated deploy) and prod (manual kubectl); only overlay values change.
 
-This project was developed and validated entirely inside a Stencil environment before any production deployment. The same Kubernetes manifests, container images, and deployment scripts that ran in the virtual cluster will run in production with only environment-specific configuration changes (hostnames, JWKS URLs, credentials).
-
-**Stencil is an open-source project by AREA Science Park.** The original repositories and documentation live at:
+**Stencil** is an open-source AREA Science Park project:
 > https://gitlab.com/area7/datacenter/codes/stencil/docs/-/tree/main/docs
 
-For a full walkthrough of the shared Stencil layers (virtualization, Ceph, FreeIPA, K3s), see the [Bucket Explorer development environment overview](https://github.com/luisfpal/s3bucket_manager_app/blob/main/docs/dev-environment-overview.md). That document uses the TEST-NET-2 documentation block (`198.51.100.0/24`); this project uses the **orfeo-vm** cluster at `192.168.132.0/24` with the same topology pattern.
+For the shared Stencil layers (virtualization → K3s), see the [Bucket Explorer development overview](https://github.com/luisfpal/s3bucket_manager_app/blob/main/docs/dev-environment-overview.md). That doc uses TEST-NET-2 (`198.51.100.0/24`); this project validates on **`192.168.132.0/24`** with the same topology.
 
 ---
 
-## Host Machine Requirements
+## Host machine requirements
 
-The virtual datacenter runs ten KVM virtual machines on a single physical host.
+Ten KVM VMs run on one host.
 
 | Component | Minimum | Recommended | Why |
 |-----------|---------|-------------|-----|
-| CPU | 8 physical cores | 16+ cores | 10 VMs share ~38 vCPUs; saturation during Ceph rebuilds and K3s deployments is common on 8 cores |
-| RAM | 64 GB | 128 GB | VMs allocate ~39 GB; below 64 GB risks OOM kills on Ceph OSD nodes |
-| Disk | 300 GB SSD | 500 GB NVMe | Ceph OSD data plus root filesystems; spinning disk stalls the Ceph cluster |
-| Network | 1 Gbit/s | 1 Gbit/s | Inter-VM traffic is virtual; physical NIC speed matters mainly for image pulls |
+| CPU | 8 physical cores | 16+ | ~38 vCPUs across VMs |
+| RAM | 64 GB | 128 GB | VMs allocate ~39 GB |
+| Disk | 300 GB SSD | 500 GB NVMe | Ceph OSD + image layers |
+| Network | 1 Gbit/s | 1 Gbit/s | Image pulls |
 
-**RAM is the hard constraint.** If your machine has less than 64 GB, reduce VM RAM in `vars.json` before provisioning — but Ceph and K3s behavior will differ from the validated configuration.
+Below 64 GB RAM, reduce VM sizes in `vars.json` — behavior may differ from the validated configuration.
 
 ---
 
-## Architecture Overview
-
-The virtual datacenter has four layers. Each layer is an independent subsystem deployed by its own provisioning project.
+## Architecture overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                     ONE PHYSICAL MACHINE (orfeo-vm)                  │
-│                                                                       │
-│  ┌─────────────────────────────────────────────────────────────────┐ │
-│  │  LAYER 1 — VIRTUALIZATION (tofu-libvirt)                        │ │
-│  │  10 VMs on network 192.168.132.0/24 (KVM via OpenTofu)         │ │
-│  └────────────────────────────┬─────────────────────────────────────┘ │
-│                               │                                       │
-│  ┌────────────────────────────▼─────────────────────────────────────┐ │
-│  │  LAYER 2 — DISTRIBUTED STORAGE (ceph-provisioning)              │ │
-│  │  Ceph cluster + Rados Gateway (S3-compatible API)               │ │
-│  └────────────────────────────┬─────────────────────────────────────┘ │
-│                               │                                       │
-│  ┌────────────────────────────▼─────────────────────────────────────┐ │
-│  │  LAYER 3 — IDENTITY & DNS (freeipa-provisioning)                │ │
-│  │  FreeIPA: DNS, Kerberos, LDAP, CA                               │ │
-│  └────────────────────────────┬─────────────────────────────────────┘ │
-│                               │                                       │
-│  ┌────────────────────────────▼─────────────────────────────────────┐ │
-│  │  LAYER 4 — KUBERNETES (kubernetes-provisioning)                 │ │
-│  │  K3s 3-node HA: 192.168.132.10 / .11 / .12                     │ │
-│  │  Flannel CNI │ Traefik IngressClass                              │ │
-│  └──────────────────────────────────────────────────────────────────┘ │
+│                     ONE PHYSICAL MACHINE                             │
+│  Layer 1: KVM VMs (OpenTofu)          192.168.132.0/24             │
+│  Layer 2: Ceph (Ansible)                                           │
+│  Layer 3: FreeIPA (Ansible)                                          │
+│  Layer 4: K3s HA — .10 / .11 / .12 (Flannel, Traefik)              │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## IP Address Map (orfeo-vm cluster)
+## IP address map (validated dev cluster)
 
-| Address / Range | Node or Service | Role |
-|-----------------|-----------------|------|
-| 192.168.132.10 | kube01 | K3s control plane (init node); SSH tunnel target |
-| 192.168.132.11 | kube02 | K3s control plane |
-| 192.168.132.12 | kube03 | K3s control plane |
-| Pod CIDR | Pod network | Internal pod IP addresses |
-| Service CIDR | Service network | ClusterIP service addresses |
+| Address | Role |
+|---------|------|
+| 192.168.132.10 | K3s init node; SSH tunnel target |
+| 192.168.132.11–12 | K3s control plane members |
+| Pod / Service CIDRs | Internal cluster networking |
 
-Other Stencil deployments (for example the Bucket Explorer project) may use a different address block with the same logical layout. Always use the addresses assigned by your Stencil `vars.json`.
+Other Stencil deployments may use a different block with the same layout. Use addresses from your `vars.json`.
 
 ---
 
-## Additions for This Project
+## Additions for this project
 
 ### Container registry (GHCR)
 
-Container images are published to the **GitHub Container Registry** at `ghcr.io/luisfpal/sem-classifier:latest`. The developer builds with `podman` and pushes using a classic GitHub PAT (`write:packages` scope) stored in `k8s/.env` (gitignored). K3s nodes pull images without credentials when the package is **public** — the same pattern as [Bucket Explorer](https://github.com/luisfpal/s3bucket_manager_app).
+Images: `ghcr.io/<ghcr_owner>/<service-id>:latest` (`ghcr_owner` in [`ml_platform/config.yaml`](../ml_platform/config.yaml)).
 
-GHCR was chosen because images are accessible from any environment: development and production K3s nodes pull the same image without configuring a private registry mirror or CA trust on each node.
+- **Push:** `GHCR_TOKEN` in `k8s/.env` (gitignored).
+- **Pull (K3s):** package must be **Public** on GitHub (no `imagePullSecrets` on nodes).
+
+Same image path in dev and prod; prod overlay may pin digest.
 
 ### Authentik (identity)
 
-Authentik runs in namespace `authentik-sem-classifier`, deployed by `k8s/infra.sh`. Tokens are obtained with **client_credentials** (machine-to-machine), not browser OAuth.
+Shared namespace `authentik-reusable-ml-services`, deployed by `make infra-deploy`. Each API gets its own OAuth2 application via `make infra-configure SERVICE=<id>`.
 
-The tracked [`gateway-settings.json`](../services/<id>/generated/dev/gateway-settings.json) template matches production shape (external HTTPS JWKS, `disable_jwk_security: false`). On the Stencil dev cluster, Authentik has no public trusted HTTPS endpoint today, so operators use a **gitignored local override** copied from [`gateway-settings.dev-workaround.json.example`](../services/<id>/generated/dev/gateway-settings.dev-workaround.json): in-cluster HTTP JWKS and `disable_jwk_security: true`. **Never use that workaround in production.**
+Tokens use **client_credentials** (machine-to-machine), not browser OAuth.
 
-### Traefik ingress
+### Gateway JWT validation (dev vs prod)
 
-Manifests include production ingress in `services/<id>/generated/prod/k8s/05-ingress.yaml` (`haproxy-4`, hostname-specific). Dev deploy optionally applies `05-ingress.dev.yaml` when that IngressClass exists. During development, operators typically reach the API through **`./app.sh access`**, which port-forwards KrakenD to `localhost:8080` rather than through ingress.
+| Environment | JWKS source | Generated by |
+|-------------|-------------|--------------|
+| Dev | In-cluster Authentik HTTP | `make render` → `generated/dev/gateway-settings.json` |
+| Prod | External HTTPS URLs | `make render-prod` from `prod.overlay.yaml` |
+
+Dev settings use `disable_jwk_security: true` because Authentik is reached in-cluster without public TLS. **Never use dev JWKS settings in production.**
+
+Optional dev override (rare): `services/<id>/gateway-settings.local.json` (gitignored). `k8s/app.sh` picks local → generated → workaround duplicate automatically.
+
+### Ingress vs port-forward
+
+Prod manifests include ingress (`generated/prod/k8s/05-ingress.yaml`, `haproxy-4`). Dev may apply optional `05-ingress.dev.yaml`.
+
+Day-to-day development uses **`make access SERVICE=<id>`** — SSH tunnel + KrakenD/Authentik port-forwards — not ingress hostnames.
 
 ### Namespaces
 
 | Namespace | Contents | Deployed by |
 |-----------|----------|-------------|
-| `authentik-sem-classifier` | Authentik server, worker, PostgreSQL, Redis | `infra.sh` |
-| `sem-classifier` | KrakenD, BentoML, Redis, PostgreSQL, HPA | `app.sh` |
+| `authentik-reusable-ml-services` | Authentik, infra PostgreSQL/Redis | `make infra-deploy` |
+| `sem-classifier` | KrakenD, BentoML, Redis, PostgreSQL, HPA | `make deploy SERVICE=sem-classifier` |
+| `sem-scale-classifier` | Same stack, second model | `make deploy SERVICE=sem-scale-classifier` |
 
-The same orfeo-vm cluster also hosts other projects (for example Bucket Explorer on port `3000`). Namespace isolation keeps workloads separate.
+Namespace names are set explicitly in `service.yaml` → `kubernetes.namespace` (dev) and `prod.overlay.yaml` (prod) — not inferred from directory names.
+
+The cluster may host other projects (e.g. Bucket Explorer on port 3000). Namespace isolation keeps workloads separate.
 
 ---
 
-## How the Application Uses This Environment
-
-Complete request path for an authenticated inference call:
+## Request path (authenticated inference)
 
 ```mermaid
 sequenceDiagram
     participant Dev as Developer_client
     participant Tunnel as SSH_tunnel
-    participant KrakenD as KrakenD_8080
-    participant BentoML as BentoML_3000
+    participant KrakenD as KrakenD
+    participant BentoML as BentoML
     participant Redis as Redis
-    participant Auth as Authentik_9001
+    participant Auth as Authentik
 
-    Dev->>Tunnel: POST localhost:8080/api/v1/inference
-    Tunnel->>KrakenD: port-forward
-    Note over Dev,Auth: Token acquired separately
-    Dev->>Auth: client_credentials via localhost:9001
+    Dev->>Auth: client_credentials via port-forward
     Auth->>Dev: JWT
-    Dev->>KrakenD: Bearer JWT
-    KrakenD->>Auth: JWKS validate in-cluster
+    Dev->>Tunnel: POST /api/v1/inference + Bearer JWT
+    Tunnel->>KrakenD: port-forward
+    KrakenD->>Auth: JWKS validate
     KrakenD->>BentoML: proxy request
     BentoML->>Redis: enqueue job
     BentoML->>Dev: job_id
 ```
 
-This API does not depend on Ceph for core operation. Optional `image_url` inference submits fetch images over outbound HTTP(S) from the BentoML pod.
+Core operation does not require Ceph. Optional `image_url` jobs fetch over HTTP(S) from the BentoML pod.
 
 ---
 
-## Port Allocation on the Developer Machine
+## Port allocation on the developer machine
 
-When `./app.sh access` is running, these local ports are in use:
+When `make access` is running:
 
 | Port | Service | Project |
 |------|---------|---------|
-| 8080 | KrakenD API gateway | SEM Image Classifier API |
-| 9000 | Authentik UI / token endpoint | s3bucket_manager_app |
-| 9001 | Authentik token endpoint | SEM Image Classifier API |
-| 16443 | K3s API (SSH tunnel) | shared |
+| 8080 | KrakenD | sem-classifier |
+| 8082 | KrakenD | sem-scale-classifier |
+| 9001 | Authentik token | sem-classifier |
+| 9002 | Authentik token | sem-scale-classifier |
+| 9000 | Authentik | s3bucket_manager_app |
 | 3000 | Frontend | s3bucket_manager_app |
+| 16443 | K3s API tunnel | shared |
 
 ---
 
-## Relationship to Production
+## Relationship to production
 
-| Aspect | Development (Stencil / orfeo-vm) | Production (AREA Science Park) |
-|--------|----------------------------------|--------------------------------|
-| Infrastructure | KVM VMs on one physical host | Physical servers in the ORFEO datacenter |
-| Kubernetes | K3s (shared dev cluster) | K3s or full K8s (production cluster) |
-| Ingress | Traefik; dev uses port-forward | Platform-managed ingress / load balancer |
-| Registry | GHCR public package (`ghcr.io/luisfpal/sem-classifier`) | GHCR or institution registry |
-| Identity | Authentik in-cluster (`infra.sh`) | Authentik platform-managed (external) |
-| Auth model | JWT RS256 via JWKS (same pattern) | JWT RS256 via JWKS (same pattern) |
-| Deploy path | `infra.sh` + `app.sh` (dev scripts) | Manual `kubectl apply` of `manifests/app/*` |
-| Config | `k8s/env/dev/*.local.*` | `k8s/env/prod/` templates + secret manager |
+| Aspect | Development (Stencil) | Production |
+|--------|----------------------|------------|
+| Infrastructure | KVM VMs on one host | Datacenter servers |
+| Kubernetes | Shared K3s dev cluster | Platform-managed cluster |
+| Reachability | Port-forward (`make access`) | Ingress / load balancer |
+| Registry | GHCR public package | GHCR or institution registry |
+| Identity | In-cluster Authentik | Platform Authentik (external URLs) |
+| Auth pattern | JWT RS256 via JWKS | Same pattern |
+| Deploy | `make deploy` → `k8s/app.sh` | Manual `kubectl apply` from `generated/prod/apply-order.txt` |
+| Config source | `service.yaml` + `ml_platform/config.yaml` | + `prod.overlay.yaml` + external secrets |
 
-Kubernetes manifests in `k8s/manifests/` require no structural changes between environments. Only overlay values change.
+**App manifests are generated** under `services/<id>/generated/{dev,prod}/k8s/`. Legacy `k8s/manifests/app/` is removed. `k8s/manifests/` holds **infra only** (Authentik templates).
 
 ---
 
-## Next Steps
+## Next steps
 
-To provision the cluster and deploy this API, follow the [Development Environment Setup Guide](dev-environment-setup.md).
-
-For production deployment on an admin-managed cluster, see [Production deployment](production-deployment.md).
+- [Development environment setup](dev-environment-setup.md) — credentials and deploy commands
+- [Dev deployment operations](dev-deployment-operations.md) — redeploy classes and troubleshooting
+- [Production deployment](production-deployment.md) — operator handoff

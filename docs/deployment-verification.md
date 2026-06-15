@@ -1,6 +1,6 @@
 # Deployment Verification
 
-Reproducible checklists for dev (automated) and prod (preflight + manual apply). Canonical clean-redeploy sequence validated on Stencil (2026-06-12): **12/12 E2E** across both services.
+Reproducible checklists for dev (automated) and prod (preflight + manual apply). Canonical clean redeploy on Stencil: **12/12 E2E** (6 tests × 2 services).
 
 ## Dev — canonical clean redeploy (all services)
 
@@ -10,10 +10,10 @@ Authentik namespace **`authentik-reusable-ml-services` is never deleted**.
 make check-prereqs
 make render-all ENV=dev
 make fresh-all          # per service: delete NS + deploy --rebuild + infra-configure
-make test-all           # starts port-forwards; reads secrets.local.yaml per service
+make test-all           # port-forwards + E2E; reads secrets.local.yaml per service
 ```
 
-**Pass:** Each service 6/6 E2E; both health URLs respond:
+**Pass:** Each service 6/6 E2E; health URLs respond:
 
 | Service | Health URL |
 |---------|------------|
@@ -27,7 +27,7 @@ make infra-deploy
 make configure-all
 ```
 
-**Pass:** Namespace `authentik-reusable-ml-services` exists; Authentik pods Ready; each configure creates a distinct OAuth2 provider/application.
+**Pass:** Namespace `authentik-reusable-ml-services` exists; Authentik pods Ready; each `infra-configure` creates a distinct OAuth2 application.
 
 ## Dev — single service
 
@@ -43,7 +43,7 @@ make test-service SERVICE=sem-classifier
 **Pass criteria:**
 
 - All pods Ready in service namespace
-- `curl http://localhost:8080/__health` → 200 (port from `service.yaml` `dev_access.api_port`)
+- `curl http://localhost:8080/__health` → 200 (port from `service.yaml` → `dev_access.api_port`)
 - `make test-service` → 6/6 passed
 
 **Teardown / redeploy:**
@@ -68,22 +68,23 @@ make test-service SERVICE=sem-scale-classifier
 ## Dev — coexistence
 
 ```bash
-kubectl get pods -n sem-classifier -n sem-scale-classifier -n authentik-reusable-ml-services
+kubectl get pods -n sem-classifier
+kubectl get pods -n sem-scale-classifier
+kubectl get pods -n authentik-reusable-ml-services
 curl -fsS http://localhost:8080/__health && curl -fsS http://localhost:8082/__health
 ```
 
 ## GHCR post-push checklist
 
-- [ ] Image visible at `ghcr.io/luisfpal/<service-id>`
-- [ ] Package visibility set to **Public** (GitHub UI — no API available)
-- [ ] Release artifact under `services/<id>/releases/` references GHCR digest
-
+- [ ] Image visible at `ghcr.io/<ghcr_owner>/<service-id>` (`ghcr_owner` in `ml_platform/config.yaml`)
+- [ ] Package visibility set to **Public** on GitHub
+- [ ] Release artifact under `services/<id>/releases/` references pushed digest
 
 ## Prod — preflight (no cluster required)
 
 ```bash
 cp services/sem-classifier/prod.overlay.yaml.example services/sem-classifier/prod.overlay.yaml
-# Fill auth URLs; secrets live outside repo
+# Fill kubernetes.namespace, auth URLs; secrets live outside repo
 
 make render-prod SERVICE=sem-classifier
 make verify-prod SERVICE=sem-classifier

@@ -64,32 +64,49 @@ class ImageClassificationModelService(ImageAsyncModelService):
         self.model.eval()
         logger.info("Model loaded successfully on %s", self.device)
 
-    def _run_model_inference(self, inference_input: Image.Image) -> ClassificationResult:
-        if self.model is None or self.image_processor is None:
-            raise RuntimeError("Model is not loaded")
-
-        image = inference_input
+    def _to_rgb(self, image: Image.Image) -> Image.Image:
         if image.mode != "RGB":
-            image = image.convert("RGB")
+            return image.convert("RGB")
+        return image
 
-        inputs = self.image_processor(images=image, return_tensors="pt")
-        inputs = {key: value.to(self.device) for key, value in inputs.items()}
-
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-            logits = outputs.logits
-            probabilities = torch.nn.functional.softmax(logits, dim=-1).squeeze()
-            predicted_idx = logits.argmax(-1).item()
-            predicted_label = self.model.config.id2label[predicted_idx]
-            confidence = float(probabilities[predicted_idx].item())
-            all_scores = {
-                self.model.config.id2label[index]: float(probabilities[index].item())
-                for index in range(len(probabilities))
-            }
-
+    def _classify_logits(self, logits: torch.Tensor) -> ClassificationResult:
+        probabilities = torch.nn.functional.softmax(logits, dim=-1).squeeze()
+        if probabilities.dim() == 0:
+            probabilities = probabilities.unsqueeze(0)
+        predicted_idx = int(logits.argmax(-1).item())
+        predicted_label = self.model.config.id2label[predicted_idx]
+        confidence = float(probabilities[predicted_idx].item())
+        all_scores = {
+            self.model.config.id2label[index]: float(probabilities[index].item())
+            for index in range(len(probabilities))
+        }
         return ClassificationResult(
             label=predicted_label,
             confidence=confidence,
             all_scores=all_scores,
             device_used=self.device,
         )
+
+    def _run_model_inference(self, inference_input: Image.Image) -> ClassificationResult:
+        if self.model is None or self.image_processor is None:
+            raise RuntimeError("Model is not loaded")
+        return self._run_model_inference_batch([inference_input])[0]
+
+    def _run_model_inference_batch(
+        self, inference_inputs: list[Image.Image]
+    ) -> list[ClassificationResult]:
+        if self.model is None or self.image_processor is None:
+            raise RuntimeError("Model is not loaded")
+        if not inference_inputs:
+            return []
+
+        images = [self._to_rgb(image) for image in inference_inputs]
+        inputs = self.image_processor(images=images, return_tensors="pt")
+        inputs = {key: value.to(self.device) for key, value in inputs.items()}
+
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            logits = outputs.logits
+            if logits.dim() == 1:
+                logits = logits.unsqueeze(0)
+            return [self._classify_logits(logits[i]) for i in range(logits.size(0))]

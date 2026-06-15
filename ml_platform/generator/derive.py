@@ -1,4 +1,12 @@
-"""Derive deployment context from service.yaml + environment."""
+"""Derive deployment context from service.yaml + environment.
+
+Inputs:
+  - services/<id>/service.yaml  (dev namespace, model, OIDC, ports)
+  - services/<id>/prod.overlay.yaml  (prod namespace, external auth URLs) — prod only
+  - ml_platform/config.yaml  (platform-wide worker, HPA, gateway defaults)
+
+Output: Jinja context for ml_platform/templates/. Re-run: make render SERVICE=<id>
+"""
 
 from __future__ import annotations
 
@@ -57,18 +65,29 @@ def build_context(
     dev_access = service.get("dev_access") or {}
     oidc = service.get("oidc") or {}
 
-    namespace = service_id
+    # Namespace: dev from service.yaml; prod from prod.overlay.yaml (platform-assigned).
     ghcr_owner = platform.get("ghcr_owner", "luisfpal")
     image_tag = "latest"
     image_digest = ""
 
     if env == "prod":
         k8s_overlay = overlay.get("kubernetes") or {}
-        namespace = k8s_overlay.get("namespace") or service_id
+        namespace = k8s_overlay.get("namespace")
+        if not namespace:
+            raise ValueError(
+                f"prod.overlay.yaml must set kubernetes.namespace for {service_id}"
+            )
         image_cfg = overlay.get("image") or {}
         ghcr_owner = (overlay.get("registry") or {}).get("ghcr_owner") or ghcr_owner
         image_tag = image_cfg.get("tag") or image_tag
         image_digest = image_cfg.get("digest") or ""
+    else:
+        k8s_service = service.get("kubernetes") or {}
+        namespace = k8s_service.get("namespace")
+        if not namespace:
+            raise ValueError(
+                f"service.yaml must set kubernetes.namespace for {service_id} (dev cluster)"
+            )
 
     image_repository = service_id
     registry = f"ghcr.io/{ghcr_owner}"
@@ -121,25 +140,100 @@ def build_context(
         "authentik_https_port": dev_access.get("authentik_https_port", 9443),
     }
 
+    ctx["ingress"] = _ingress_context(env, service_id, overlay)
+    ctx["autoscaling"] = _autoscaling_context(platform, service)
+    ctx["worker"] = _worker_context(platform, service)
+    ctx["gateway"] = _gateway_context(platform, service)
+
     if env == "dev":
         ctx["gateway_settings"] = _dev_gateway_settings(ctx)
     else:
         ctx["gateway_settings"] = _prod_gateway_settings(ctx, overlay)
 
-    ctx["ingress"] = _ingress_context(env, service_id, overlay)
     return ctx
+
+
+def _gateway_context(platform: dict[str, Any], service: dict[str, Any]) -> dict[str, Any]:
+    defaults = platform.get("gateway") or {}
+    overrides = service.get("gateway") or {}
+    merged = {**defaults, **overrides}
+    return {
+        "inference_rate_limit": int(merged.get("inference_rate_limit", 500)),
+        "inference_rate_capacity": int(merged.get("inference_rate_capacity", 500)),
+    }
+
+
+
+def _require_merged(merged: dict[str, Any], key: str, section: str) -> Any:
+    if key not in merged:
+        raise ValueError(
+            f"Missing {section}.{key} in ml_platform/config.yaml (or service override)"
+        )
+    return merged[key]
+
+
+def _worker_context(platform: dict[str, Any], service: dict[str, Any]) -> dict[str, Any]:
+    defaults = platform.get("worker") or {}
+    overrides = service.get("worker") or {}
+    merged = {**defaults, **overrides}
+    return {
+        "inference_batch_size": int(_require_merged(merged, "inference_batch_size", "worker")),
+        "inference_batch_max_wait_ms": int(
+            _require_merged(merged, "inference_batch_max_wait_ms", "worker")
+        ),
+        "worker_poll_interval_ms": int(
+            _require_merged(merged, "worker_poll_interval_ms", "worker")
+        ),
+    }
+
+
+def _autoscaling_context(platform: dict[str, Any], service: dict[str, Any]) -> dict[str, Any]:
+    defaults = platform.get("autoscaling") or {}
+    overrides = service.get("autoscaling") or {}
+    merged = {**defaults, **overrides}
+    return {
+        "enabled": bool(_require_merged(merged, "enabled", "autoscaling")),
+        "min_replicas": int(_require_merged(merged, "min_replicas", "autoscaling")),
+        "max_replicas": int(_require_merged(merged, "max_replicas", "autoscaling")),
+        "cpu_target_percent": int(_require_merged(merged, "cpu_target_percent", "autoscaling")),
+        "cpu_request": str(_require_merged(merged, "cpu_request", "autoscaling")),
+        "cpu_limit": str(_require_merged(merged, "cpu_limit", "autoscaling")),
+        "memory_request": str(_require_merged(merged, "memory_request", "autoscaling")),
+        "memory_limit": str(_require_merged(merged, "memory_limit", "autoscaling")),
+        "scale_up_stabilization_seconds": int(
+            _require_merged(merged, "scale_up_stabilization_seconds", "autoscaling")
+        ),
+        "scale_up_pods_per_period": int(
+            _require_merged(merged, "scale_up_pods_per_period", "autoscaling")
+        ),
+        "scale_up_period_seconds": int(
+            _require_merged(merged, "scale_up_period_seconds", "autoscaling")
+        ),
+        "scale_down_stabilization_seconds": int(
+            _require_merged(merged, "scale_down_stabilization_seconds", "autoscaling")
+        ),
+        "scale_down_pods_per_period": int(
+            _require_merged(merged, "scale_down_pods_per_period", "autoscaling")
+        ),
+        "scale_down_period_seconds": int(
+            _require_merged(merged, "scale_down_period_seconds", "autoscaling")
+        ),
+    }
 
 
 def _dev_gateway_settings(ctx: dict[str, Any]) -> dict[str, Any]:
     slug = ctx["oidc_application_slug"]
     fqdn = ctx["authentik_fqdn"]
     base = f"http://{fqdn}:9000/application/o/{slug}"
+    gw = ctx.get("gateway") or {}
     return {
         "port": 8080,
         "timeout": "30s",
         "backend_host": "http://bentoml:3000",
         "service_name": ctx["service_id"],
         "display_name": ctx["display_name"],
+        "inference_rate_limit": int(gw.get("inference_rate_limit", 500)),
+        "inference_rate_capacity": int(gw.get("inference_rate_capacity", 500)),
         "auth": {
             "provider": "authentik",
             "alg": "RS256",
@@ -173,12 +267,15 @@ def _dev_gateway_settings(ctx: dict[str, Any]) -> dict[str, Any]:
 def _prod_gateway_settings(ctx: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     auth = overlay.get("auth") or {}
     slug = ctx["oidc_application_slug"]
+    gw = overlay.get("gateway") or ctx.get("gateway") or {}
     return {
         "port": 8080,
         "timeout": "30s",
         "backend_host": "http://bentoml:3000",
         "service_name": ctx["service_id"],
         "display_name": ctx["display_name"],
+        "inference_rate_limit": int(gw.get("inference_rate_limit", 100)),
+        "inference_rate_capacity": int(gw.get("inference_rate_capacity", 100)),
         "auth": {
             "provider": "authentik",
             "alg": "RS256",

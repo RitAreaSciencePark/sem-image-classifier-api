@@ -170,6 +170,8 @@ class RedisJobQueue:
     def mark_job_completed(self, job_id: str, result: Dict[str, Any]):
         """Mark job as completed and set TTL for auto-cleanup."""
         job_key = f"{self.JOB_PREFIX}{job_id}"
+        job = self.redis_client.hgetall(job_key)
+        was_processing = job.get("status") == JobStatus.PROCESSING
 
         self.redis_client.hset(
             job_key,
@@ -183,7 +185,8 @@ class RedisJobQueue:
         # Set retention window for completed jobs.
         self.redis_client.expire(job_key, self.job_ttl)
 
-        self.redis_client.hincrby(self.STATS_KEY, "processing", -1)
+        if was_processing:
+            self.redis_client.hincrby(self.STATS_KEY, "processing", -1)
         self.redis_client.hincrby(self.STATS_KEY, "completed", 1)
 
         logger.info("Job %s completed (TTL: %ds)", job_id, self.job_ttl)
@@ -191,6 +194,8 @@ class RedisJobQueue:
     def mark_job_failed(self, job_id: str, error: str):
         """Mark job as failed and set TTL for auto-cleanup."""
         job_key = f"{self.JOB_PREFIX}{job_id}"
+        job = self.redis_client.hgetall(job_key)
+        was_processing = job.get("status") == JobStatus.PROCESSING
 
         self.redis_client.hset(
             job_key,
@@ -203,7 +208,8 @@ class RedisJobQueue:
 
         self.redis_client.expire(job_key, self.job_ttl)
 
-        self.redis_client.hincrby(self.STATS_KEY, "processing", -1)
+        if was_processing:
+            self.redis_client.hincrby(self.STATS_KEY, "processing", -1)
         self.redis_client.hincrby(self.STATS_KEY, "failed", 1)
 
         logger.warning("Job %s failed: %s", job_id, error)
@@ -211,15 +217,25 @@ class RedisJobQueue:
     def get_queue_stats(self) -> Dict[str, Any]:
         """Return queue statistics snapshot."""
         stats = self.redis_client.hgetall(self.STATS_KEY)
+        queue_size = self.redis_client.llen(self.PENDING_QUEUE)
 
         return {
-            "total_jobs": int(stats.get("total_jobs", 0)),
-            "pending": int(stats.get("pending", 0)),
-            "processing": int(stats.get("processing", 0)),
-            "completed": int(stats.get("completed", 0)),
-            "failed": int(stats.get("failed", 0)),
-            "queue_size": self.redis_client.llen(self.PENDING_QUEUE),
+            "total_jobs": max(0, int(stats.get("total_jobs", 0))),
+            "pending": max(0, queue_size),
+            "processing": max(0, int(stats.get("processing", 0))),
+            "completed": max(0, int(stats.get("completed", 0))),
+            "failed": max(0, int(stats.get("failed", 0))),
+            "queue_size": queue_size,
         }
+
+    def maybe_reconcile_stats(self) -> None:
+        """Repair counter drift when stats look inconsistent."""
+        stats = self.redis_client.hgetall(self.STATS_KEY)
+        processing = int(stats.get("processing", 0))
+        pending_counter = int(stats.get("pending", 0))
+        queue_len = self.redis_client.llen(self.PENDING_QUEUE)
+        if processing < 0 or pending_counter != queue_len:
+            self.reconcile_stats()
 
     def timeout_stale_jobs(self, max_age_seconds: int = 300):
         """Fail PROCESSING jobs older than max_age_seconds."""

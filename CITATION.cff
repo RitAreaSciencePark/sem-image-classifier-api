@@ -1,20 +1,19 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 type: software
-title: Reusable Async Analysis Service Pipeline
+title: Reusable Async ML API Platform
 version: 1.0.0
-date-released: "2026-05-26"
+date-released: "2026-06-15"
 license: EUPL-1.2
-repository-code: https://github.com/RitAreaSciencePark/sem-classifier-api
+repository-code: https://github.com/RitAreaSciencePark/sem-image-classifier-api
 abstract: >
-  A modular, reusable framework for asynchronous model serving on Kubernetes,
-  built on BentoML, Redis, KrakenD, and PostgreSQL. The architecture decouples
-  generic async queue orchestration, modality-specific input handling, and model
-  inference into independent layers, enabling any non-LLM inference workload to
-  be deployed by replacing only the model-specific component. Ships with a
-  Hugging Face ViT SEM (Scanning Electron Microscopy) image classifier as its
-  reference implementation, deployed for the NFFA-DI Digital Ecosystem at
-  AREA Science Park.
+  A codegen-driven async ML API platform on Kubernetes, built on BentoML,
+  Redis, KrakenD, and PostgreSQL. Operators define services in YAML; the
+  generator renders identical dev and prod deployment bundles. Decouples
+  generic async queue orchestration, modality-specific input handling, and
+  model inference into independent layers. Ships with Hugging Face ViT SEM
+  image classifiers as reference implementations for the NFFA-DI Digital
+  Ecosystem at AREA Science Park.
 authors:
   - family-names: Palacios Flores
     given-names: Luis Fernando
@@ -33,7 +32,7 @@ keywords:
   - BentoML
   - Redis
   - KrakenD
-  - scientific computing
+  - machine learning
   - image classification
   - scanning electron microscopy
   - NFFA-DI

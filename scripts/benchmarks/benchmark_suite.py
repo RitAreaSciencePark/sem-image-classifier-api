@@ -3,11 +3,17 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+_repo_root = Path(__file__).resolve().parents[2]
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
 import argparse
 import concurrent.futures
 import json
 import math
-import os
 import random
 import subprocess
 import time
@@ -16,21 +22,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-import sys
-
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
 import requests
 
-from scripts.service_context import apply_service_defaults, load_deploy_env
+from ml_platform.devtools.api_client import DEFAULT_IMAGE_URL, InferenceClient, get_token
+from ml_platform.devtools.cli import add_service_arguments, resolve_service_context
+from ml_platform.devtools.paths import repo_root
 
-DEFAULT_IMAGE_URL = (
-    "https://enif.unl.edu/sites/unl.edu.research.nebraska-center-for-materials-"
-    "and-nanoscience.electron-nanoscopy/files/styles/no_crop_720/public/media/"
-    "image/NanoSEM_15KV.jpg?itok=McoSOeAv"
-)
 BOOTSTRAP_SAMPLES = 2000
 
 SCENARIOS: dict[str, dict[str, int]] = {
@@ -194,36 +191,6 @@ def delta_s(start: datetime | None, end: datetime | None) -> float | None:
     return max(0.0, (end - start).total_seconds())
 
 
-def get_token(
-    token_url: str,
-    client_id: str,
-    client_secret: str,
-    host_header: str,
-    timeout: float,
-) -> str:
-    headers = {"Host": host_header} if host_header else {}
-    response = requests.post(
-        token_url,
-        headers=headers,
-        data={
-            "grant_type": "client_credentials",
-            "scope": "openid profile",
-            "client_id": client_id,
-            "client_secret": client_secret,
-        },
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    token = response.json().get("access_token")
-    if not token:
-        raise RuntimeError("token response had no access_token")
-    return token
-
-
-def auth_headers(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
-
-
 def fetch_health(base_url: str, timeout: float) -> dict[str, Any]:
     response = requests.get(f"{base_url.rstrip('/')}/health", timeout=timeout)
     response.raise_for_status()
@@ -250,7 +217,7 @@ def git_commit() -> str | None:
             check=True,
             capture_output=True,
             text=True,
-            cwd=Path(__file__).resolve().parents[1],
+            cwd=repo_root(),
         )
         return result.stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -313,7 +280,7 @@ def wait_for_idle_queue(base_url: str, timeout: float, max_wait: float = 120.0) 
     while time.monotonic() < deadline:
         health = fetch_health(base_url, timeout)
         queue = health.get("queue") or {}
-        if int(queue.get("pending", 0)) == 0 and int(queue.get("processing", 0)) == 0:
+        if int(queue.get("pending", 0)) == 0 and int(queue.get("processing", 0)) <= 0:
             return
         time.sleep(1.0)
     raise TimeoutError("Queue did not drain within cooldown window")
@@ -329,70 +296,50 @@ def run_one_job(
     trial: int,
 ) -> JobMetrics:
     metrics = JobMetrics(trial=trial)
-    base = base_url.rstrip("/")
-    headers = auth_headers(token)
+    client = InferenceClient(
+        base_url, token, default_timeout=timeout, poll_interval=poll_interval
+    )
     run_started = time.perf_counter()
 
     try:
-        submit_started = time.perf_counter()
-        submit_resp = requests.post(
-            f"{base}/api/v1/inference",
-            json={"image_url": image_url},
-            headers=headers,
-            timeout=timeout,
-        )
-        metrics.submit_latency_s = time.perf_counter() - submit_started
-        if submit_resp.status_code != 200:
-            metrics.final_status = f"SUBMIT_HTTP_{submit_resp.status_code}"
-            metrics.error = submit_resp.text[:200]
+        submit = client.submit(image_url, timeout=timeout)
+        metrics.submit_latency_s = submit.latency_s
+        if submit.status_code != 200:
+            metrics.final_status = f"SUBMIT_HTTP_{submit.status_code}"
+            metrics.error = submit.error
             return metrics
 
-        job_id = submit_resp.json().get("job_id", "")
-        metrics.job_id = job_id
-        if not job_id:
+        metrics.job_id = submit.job_id
+        if not submit.job_id:
             metrics.final_status = "SUBMIT_NO_JOB_ID"
-            metrics.error = "missing job_id"
+            metrics.error = submit.error or "missing job_id"
             return metrics
 
-        deadline = time.monotonic() + timeout
-        status_payload: dict[str, Any] = {}
-        while time.monotonic() < deadline:
-            status_resp = requests.post(
-                f"{base}/api/v1/jobs/status",
-                json={"job_id": job_id},
-                headers=headers,
-                timeout=timeout,
-            )
-            if status_resp.status_code != 200:
-                metrics.final_status = f"POLL_HTTP_{status_resp.status_code}"
-                metrics.error = status_resp.text[:200]
-                return metrics
+        poll = client.poll_until_done(
+            submit.job_id, timeout=timeout, interval=poll_interval
+        )
+        metrics.final_status = poll.status
+        if poll.status == "COMPLETED":
+            metrics.e2e_latency_s = time.perf_counter() - run_started
+            started = parse_iso(poll.payload.get("started_at"))
+            completed = parse_iso(poll.payload.get("completed_at"))
+            metrics.processing_s = delta_s(started, completed)
+            if (
+                metrics.e2e_latency_s is not None
+                and metrics.submit_latency_s is not None
+                and metrics.processing_s is not None
+            ):
+                metrics.residual_wait_s = max(
+                    0.0,
+                    metrics.e2e_latency_s
+                    - metrics.submit_latency_s
+                    - metrics.processing_s,
+                )
+            return metrics
 
-            status_payload = status_resp.json()
-            status = status_payload.get("status", "UNKNOWN")
-            if status in {"COMPLETED", "FAILED", "NOT_FOUND"}:
-                metrics.final_status = status
-                metrics.e2e_latency_s = time.perf_counter() - run_started
-                started = parse_iso(status_payload.get("started_at"))
-                completed = parse_iso(status_payload.get("completed_at"))
-                metrics.processing_s = delta_s(started, completed)
-                if (
-                    metrics.e2e_latency_s is not None
-                    and metrics.submit_latency_s is not None
-                    and metrics.processing_s is not None
-                ):
-                    metrics.residual_wait_s = max(
-                        0.0,
-                        metrics.e2e_latency_s
-                        - metrics.submit_latency_s
-                        - metrics.processing_s,
-                    )
-                return metrics
-
-            time.sleep(poll_interval)
-
-        metrics.final_status = "POLL_TIMEOUT"
-        metrics.error = f"timeout after {timeout:.1f}s"
+        metrics.error = poll.error
+        if poll.status == "POLL_TIMEOUT":
+            metrics.error = poll.error or f"timeout after {timeout:.1f}s"
         return metrics
     except Exception as exc:
         metrics.final_status = "ERROR"
@@ -562,7 +509,7 @@ def latex_table_row(label: str, aggregate: AggregateSummary) -> str:
 
 def write_latex_summary(path: Path, aggregates: list[AggregateSummary]) -> None:
     lines = [
-        "% Auto-generated by scripts/benchmark_suite.py",
+        "% Auto-generated by scripts/benchmarks/benchmark_suite.py",
         "\\begin{tabular}{lrrrr}",
         "\\toprule",
         "Config & Throughput (jobs/min) & E2E p50 [95\\% CI] (s) & Processing p50 (s) & Success \\\\",
@@ -598,20 +545,7 @@ def resolve_scenario_params(args: argparse.Namespace) -> tuple[int, int, int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Paper benchmark suite for SEM classifier API.")
-    parser.add_argument("--service", default=os.environ.get("SERVICE", "sem-classifier"))
-    parser.add_argument("--base-url", default="")
-    parser.add_argument(
-        "--auth-token-url",
-        default="http://localhost:9001/application/o/token/",
-    )
-    parser.add_argument("--auth-client-id", default="sem-classifier-api")
-    parser.add_argument(
-        "--auth-client-secret", default=os.environ.get("AUTH_CLIENT_SECRET", "")
-    )
-    parser.add_argument(
-        "--auth-host-header",
-        default="authentik-service.authentik-reusable-ml-services.svc.cluster.local:9000",
-    )
+    add_service_arguments(parser)
     parser.add_argument(
         "--scenario",
         choices=sorted(SCENARIOS.keys()),
@@ -631,19 +565,9 @@ def main() -> int:
     parser.add_argument("--write-latex", default="")
     args = parser.parse_args()
 
-    ctx = apply_service_defaults(args.service)
-    if not args.base_url:
-        args.base_url = ctx["base_url"]
-    if args.auth_token_url == "http://localhost:9001/application/o/token/":
-        args.auth_token_url = ctx["auth_token_url"]
-    if args.auth_client_id == "sem-classifier-api":
-        args.auth_client_id = ctx["auth_client_id"]
-    if args.auth_host_header == "authentik-service.authentik-sem-classifier.svc.cluster.local:9000":
-        args.auth_host_header = ctx["auth_host_header"]
-    if not args.auth_client_secret:
-        args.auth_client_secret = ctx["auth_client_secret"]
+    ctx = resolve_service_context(args)
 
-    if not args.auth_client_secret:
+    if not ctx.auth_client_secret:
         raise SystemExit(
             "AUTH_CLIENT_SECRET or --auth-client-secret is required for Authentik tokens"
         )
@@ -652,22 +576,24 @@ def main() -> int:
     jobs, concurrency, warmup = resolve_scenario_params(args)
 
     token = get_token(
-        args.auth_token_url,
-        args.auth_client_id,
-        args.auth_client_secret,
-        args.auth_host_header,
-        args.timeout,
+        ctx.auth_token_url,
+        ctx.auth_client_id,
+        ctx.auth_client_secret,
+        ctx.auth_host_header,
+        timeout=args.timeout,
     )
-    environment = capture_environment(args.base_url, ctx["namespace"], args.timeout, args.poll_interval)
+    environment = capture_environment(
+        ctx.base_url, ctx.namespace, args.timeout, args.poll_interval
+    )
 
     trial_summaries: list[TrialSummary] = []
     for trial_idx in range(1, args.trials + 1):
         if trial_idx > 1 and args.cooldown_s > 0:
             time.sleep(args.cooldown_s)
-            wait_for_idle_queue(args.base_url, args.timeout)
+            wait_for_idle_queue(ctx.base_url, args.timeout)
         summary = execute_trial(
             trial=trial_idx,
-            base_url=args.base_url,
+            base_url=ctx.base_url,
             token=token,
             image_url=args.image_url,
             jobs=jobs,

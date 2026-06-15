@@ -1,5 +1,36 @@
-# Shared platform defaults (not per-service).
-# Change ghcr_owner when publishing images under a different GitHub account.
+# ml_platform/config.yaml — platform-wide defaults (not per-service).
+# Edit when forking (ghcr_owner) or tuning worker/HPA/gateway for all services.
+# Per-service overrides: services/<id>/service.yaml (worker, autoscaling sections).
+
 infra_namespace: authentik-reusable-ml-services
 ghcr_owner: luisfpal
 registry_scheme: https
+
+# BentoML HPA defaults (CPU-based; pre-prod has no KEDA).
+# CPU request is sized for ViT inference duty cycle so utilization tracks load.
+autoscaling:
+  enabled: true
+  min_replicas: 1
+  max_replicas: 3
+  cpu_target_percent: 70
+  cpu_request: "1000m"
+  cpu_limit: "2"
+  memory_request: "512Mi"
+  memory_limit: "2Gi"
+  scale_up_stabilization_seconds: 0
+  scale_up_pods_per_period: 2
+  scale_up_period_seconds: 60
+  scale_down_stabilization_seconds: 300
+  scale_down_pods_per_period: 1
+  scale_down_period_seconds: 120
+
+# Inference worker tuning (BentoML pod background worker).
+worker:
+  inference_batch_size: 16
+  inference_batch_max_wait_ms: 100
+  worker_poll_interval_ms: 50
+
+# KrakenD dev defaults (prod overlay may lower these).
+gateway:
+  inference_rate_limit: 500
+  inference_rate_capacity: 500

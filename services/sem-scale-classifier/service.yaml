@@ -1,6 +1,5 @@
 service_id: sem-scale-classifier
 display_name: SEM Scale Classifier API
-
 model:
   module: models.sem_scale_classifier
   class: SemScaleClassifierService
@@ -9,14 +8,14 @@ model:
   id: t0m-R/vit-sem-scale-classifier
   revision: a20e54a100db0a8a4f9bba0356247bbe5d486593
   cache_dir: /root/private-model-registry/sem-scale-cache
-
 oidc:
   application_slug: sem-scale-classifier
   client_id: sem-scale-classifier-api
   provider_name: sem-scale-classifier-provider
-  app_display_name: "SEM Scale Classifier API"
-
+  app_display_name: SEM Scale Classifier API
 dev_access:
   api_port: 8082
   authentik_port: 9002
   authentik_https_port: 9444
+kubernetes:
+  namespace: sem-scale-classifier

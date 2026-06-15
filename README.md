@@ -1,8 +1,20 @@
-# SEM Classifier API
+# Reusable Async ML API Platform
 
-Multi-service ML serving platform for Scanning Electron Microscopy (SEM) image classification. Each API is defined by `services/<id>/service.yaml`; a shared generator renders identical Kubernetes shapes for **dev** (Stencil K3s) and **prod** (manual kubectl).
+Codegen-driven async ML API platform on **Kubernetes**. Define a service in `services/<id>/service.yaml`; the generator renders identical deployment shapes for **dev** (Stencil K3s) and **prod** (manual kubectl). Ships with SEM image classifiers as reference implementations.
 
 Stack: **BentoML** + **Redis** + **KrakenD** + **PostgreSQL** usage tracking. JWT RS256 via shared Authentik (`authentik-reusable-ml-services`).
+
+## Maintainer journey
+
+```text
+1. make onboard SERVICE=x MODEL_ID=org/model     → scaffold service.yaml + model stub
+2. Edit service.yaml, src/models/, secrets        → hand-written only
+3. make render / make render-prod                 → generated/ (never edit)
+4. make deploy (dev) or prod-pack (prod)          → deploy bundle
+5. usage-report/run.sh                            → HTML usage report in browser
+```
+
+Hand-written files: `service.yaml`, `src/models/`, `secrets.local.yaml`, `prod.overlay.yaml`. Everything under `generated/` is codegen output.
 
 ## Architecture
 
@@ -24,7 +36,7 @@ flowchart LR
 
 ```bash
 cp k8s/.env.example k8s/.env          # set GHCR_TOKEN (write:packages PAT)
-cp k8s/env/dev/cluster.local.env.example k8s/env/dev/cluster.local.env  # if needed
+# Optional: k8s/env/dev/cluster.local.env — SSH/tunnel overrides (see dev-environment-setup.md)
 
 make check-prereqs
 make infra-deploy
@@ -32,6 +44,7 @@ make deploy-all DEPLOY_ARGS=--rebuild
 make configure-all
 make access SERVICE=sem-classifier    # repeat per service or see docs
 make test-all
+make usage-report SERVICE=sem-classifier   # HTML report → /tmp/
 ```
 
 ## Registry handoff (forks)
@@ -50,7 +63,7 @@ sem-classifier-api/
 ├── ml_platform/           # Generator, templates, config.yaml
 ├── services/<id>/         # service.yaml, secrets, prod.overlay.yaml
 │   └── generated/         # Rendered dev/prod artifacts (do not edit)
-├── src/core/              # Shared pipeline
+├── src/core/              # Shared async pipeline
 ├── src/models/            # Per-model BentoML services
 ├── gateway/               # KrakenD flexible config + usage plugin
 ├── k8s/app.sh             # Dev deploy only
@@ -61,8 +74,11 @@ sem-classifier-api/
 
 ## Makefile targets
 
+Run `make help` for the full list. Common targets:
+
 | Target | Purpose |
 |--------|---------|
+| `make onboard SERVICE=x MODEL_ID=org/model` | Scaffold + render + validate + secrets |
 | `make render SERVICE=x` | Generate `services/x/generated/dev/` |
 | `make deploy SERVICE=x DEPLOY_ARGS=--rebuild` | Render, build, push GHCR, deploy |
 | `make fresh SERVICE=x` | Delete namespace + rebuild + configure |
@@ -70,6 +86,9 @@ sem-classifier-api/
 | `make render-prod SERVICE=x` | Generate prod bundle |
 | `make verify-prod SERVICE=x` | Prod preflight (must pass) |
 | `make prod-pack SERVICE=x` | Tarball for prod operator |
+| `make usage-report SERVICE=x` | Last 24h API usage HTML report |
+
+New services: [docs/adding-a-service.md](docs/adding-a-service.md).
 
 ## Public API
 
@@ -84,17 +103,6 @@ KrakenD gateway (port from `service.yaml` `dev_access.api_port`, default 8080):
 | `POST` | `/api/v1/jobs/results` | JWT |
 | `GET` | `/api/v1/version` | No |
 
-## Adding a service
-
-See [docs/adding-a-service.md](docs/adding-a-service.md). Four commands after editing `service.yaml` and model code:
-
-```bash
-make deploy SERVICE=my-api DEPLOY_ARGS=--rebuild
-make infra-configure SERVICE=my-api
-make access SERVICE=my-api
-make test-service SERVICE=my-api
-```
-
 ## Production
 
 Production does **not** use `k8s/app.sh`. See [docs/production-deployment.md](docs/production-deployment.md):
@@ -104,8 +112,14 @@ make render-prod SERVICE=sem-classifier
 make verify-prod SERVICE=sem-classifier
 make prod-pack SERVICE=sem-classifier
 # Operator applies generated/prod/apply-order.txt
+# Usage report: cd usage-report && ./run.sh --namespace $NS
 ```
+
+## Related projects
+
+- [Stencil](https://gitlab.com/area7/datacenter/codes/stencil/docs/-/tree/main/docs) — virtual datacenter for dev validation
+- [Buckets Explorer dev overview](https://github.com/luisfpal/s3bucket-manager-app/blob/main/docs/dev-environment-overview.md) — sibling NFFA-DI service layer (same Stencil topology)
 
 ## Documentation
 
-Full index: [docs/README.md](docs/README.md)
+Full index: [docs/README.md](docs/README.md) — setup, architecture, workers, autoscaling, production, usage reports.

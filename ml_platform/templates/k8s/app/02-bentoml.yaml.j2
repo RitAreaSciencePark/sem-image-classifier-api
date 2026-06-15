@@ -69,11 +69,11 @@ spec:
 
           resources:
             requests:
-              cpu: 200m
-              memory: 512Mi
+              cpu: {{ autoscaling.cpu_request }}
+              memory: {{ autoscaling.memory_request }}
             limits:
-              cpu: "2"
-              memory: 2Gi
+              cpu: {{ autoscaling.cpu_limit }}
+              memory: {{ autoscaling.memory_limit }}
 
           # Startup probe guards against false restarts during model load.
           startupProbe:

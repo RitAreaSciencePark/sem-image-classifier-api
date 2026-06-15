@@ -2,107 +2,118 @@
 
 ## Overview
 
-This repository is a **codegen-driven ML serving platform**. Each deployed API is defined by a hand-written `services/<id>/service.yaml`. A shared generator renders identical Kubernetes shapes for **dev** (Stencil K3s) and **prod** (AREA Science Park manual kubectl).
+This repository is a **codegen-driven ML serving platform**. Each API is defined by hand-written `services/<id>/service.yaml`. A shared generator renders identical Kubernetes shapes for **dev** (Stencil K3s, automated) and **prod** (manual kubectl).
 
 ```
-services/<id>/service.yaml          # identity, model, OIDC, dev ports
-services/<id>/prod.overlay.yaml     # prod-only deltas (gitignored locally)
-services/<id>/secrets.local.yaml    # cryptographic material (gitignored)
+services/<id>/service.yaml          # identity, dev namespace, model, OIDC, ports
+services/<id>/prod.overlay.yaml     # prod namespace, external auth, ingress (gitignored)
+services/<id>/secrets.local.yaml    # Redis/Postgres/OIDC secrets (gitignored)
         │
         ▼  make render ENV=dev|prod
 services/<id>/generated/{dev,prod}/
         │
-        ├─ dev  → make deploy → k8s/app.sh (automated)
-        └─ prod → make verify-prod → operator kubectl apply-order.txt
+        ├─ dev  → make deploy → k8s/app.sh
+        └─ prod → make verify-prod → operator apply-order.txt
 ```
 
-Shared identity infrastructure (Authentik) lives in namespace `authentik-reusable-ml-services` — one Authentik, many OAuth2 applications.
+Shared Authentik lives in `authentik-reusable-ml-services` — one identity server, many OAuth2 applications (`make infra-configure SERVICE=<id>` per API).
 
 ## Repository layout
 
 | Path | Role |
 |------|------|
-| `src/core/` | Stable async pipeline (Redis queue, image fetch, classification base) |
-| `src/models/` | Per-model BentoML services (`sem_classifier`, `sem_scale_classifier`) |
-| `ml_platform/generator/` | `render.py`, `derive.py`, `validate.py`, `verify_prod.py`, `scaffold.py` |
-| `ml_platform/templates/` | Jinja2 templates for K8s manifests, gateway settings, prod bundle |
-| `ml_platform/config.yaml` | Platform defaults (`ghcr_owner`, `infra_namespace`) |
-| `services/<id>/` | Per-service source of truth and generated artifacts |
-| `gateway/` | KrakenD flexible configuration (shared across services) |
-| `k8s/app.sh` | **Dev only** — build, push to GHCR, deploy |
-| `k8s/infra.sh` | **Dev only** — shared Authentik stack |
-| `Makefile` | Thin CLI over render, deploy, test, prod verify |
+| `src/core/` | Async pipeline (Redis queue, image fetch, classification base) |
+| `src/models/` | Per-model BentoML services |
+| `ml_platform/generator/` | `render`, `derive`, `validate`, `verify_prod`, `scaffold` |
+| `ml_platform/templates/` | Jinja2 → K8s, gateway JSON, prod bundle |
+| `ml_platform/config.yaml` | Platform defaults (worker batch, HPA, gateway, `ghcr_owner`) |
+| `services/<id>/` | Per-service source of truth + generated artifacts |
+| `gateway/` | KrakenD flexible config + usage-tracking plugin |
+| `k8s/app.sh` | **Dev only** — build, GHCR push, deploy |
+| `k8s/infra.sh` | **Dev only** — shared Authentik |
+| `Makefile` | Primary operator interface (`make help`) |
 
 ## Initial services
 
-| Service | Namespace | Dev API / Auth PF | Model source |
-|---------|-----------|-------------------|--------------|
+| Service | Dev namespace | Dev API / Auth PF | Model source |
+|---------|---------------|-------------------|--------------|
 | `sem-classifier` | `sem-classifier` | 8080 / 9001 | Hugging Face public |
 | `sem-scale-classifier` | `sem-scale-classifier` | 8082 / 9002 | Private HF cache at build time |
+
+Namespaces are **explicit** in YAML (`kubernetes.namespace`), not inferred from `service_id`.
 
 ## Dev vs prod rendering
 
 | Artifact | `generated/dev/` | `generated/prod/` |
 |----------|------------------|-------------------|
-| `k8s/*.yaml` | GHCR image, dev ingress optional | GHCR image, prod ingress from overlay |
-| `gateway-settings.json` | In-cluster HTTP JWKS workaround | External HTTPS JWKS from overlay |
-| `gateway-settings.dev-workaround.json` | Yes | No |
-| `deploy.env` | Ports, registry, OIDC vars | NS, image ref (no port-forwards) |
+| `k8s/*.yaml` | GHCR `:latest`, optional dev ingress | Ingress + external auth from overlay |
+| `gateway-settings.json` | In-cluster Authentik HTTP JWKS | External HTTPS JWKS from overlay |
+| `deploy.env` | Ports, registry, OIDC vars | Namespace, image ref |
 | `apply-order.txt` | Reference | Operator apply sequence |
-| `preflight-checklist.md` | Dev checks | Prod checks |
+| `preflight-checklist.md` | Dev checks | Prod gate checklist |
 
-Dev and prod use the same image path: `ghcr.io/<ghcr_owner>/<service-id>` (see `ml_platform/config.yaml`). Prod overlay may override owner, tag, or digest.
+Both environments use `ghcr.io/<ghcr_owner>/<service-id>` unless overlay pins digest. Owner: `ml_platform/config.yaml`.
 
 ## Python extension model
 
-Add model logic under `src/models/`. Reference it from `service.yaml`:
+Add logic under `src/models/`. Reference from `service.yaml`:
 
 ```yaml
+kubernetes:
+  namespace: my-api          # dev cluster namespace
+
 model:
   module: models.my_model
   class: MyModelService
   bento_name: my-model
-  source: hugging_face   # or private
+  source: hugging_face       # or private
   id: org/repo
   revision: <commit>
-  cache_dir: ""          # absolute path required when source=private
+  cache_dir: ""              # absolute path when source: private
 ```
 
-Run `make validate SERVICE=<id>` to check schema + Python syntax before deploy.
+Run `make validate SERVICE=<id>` before deploy.
 
 ## Gateway and database
 
-- Gateway templates are parameterized by `display_name` and `service_id` — no hard-coded SEM strings in generated settings.
-- `db/schema.sql` is generic usage tracking; applied via `postgresql-init` ConfigMap at deploy time.
-- KrakenD ConfigMaps must exist **before** PostgreSQL and KrakenD rollouts (`app.sh` generates them first).
+- Gateway templates parameterize `display_name` and `service_id` — no hard-coded SEM strings.
+- `db/schema.sql` defines usage tracking; applied via `postgresql-init` ConfigMap at deploy.
+- KrakenD ConfigMaps are rendered **before** PostgreSQL/KrakenD rollouts (`app.sh` order).
 
 ## Makefile targets
 
+Run `make help` for the full list. Core targets:
+
 ```bash
-make render SERVICE=x ENV=dev          # Dev artifacts (default)
-make render-prod SERVICE=x             # Prod bundle (requires prod.overlay.yaml)
-make validate SERVICE=x                # Schema + Python import check
-make deploy SERVICE=x                  # render + build + app.sh deploy
-make deploy SERVICE=x DEPLOY_ARGS=--rebuild   # Force image rebuild
-make test-service SERVICE=x            # E2E via tests/test_api.py
-make infra-deploy                      # Shared Authentik (once)
-make infra-configure SERVICE=x         # OIDC app per service
-make verify-prod SERVICE=x             # Prod preflight gate
-make prod-pack SERVICE=x               # Tarball for operator handoff
-make teardown SERVICE=x                # Delete app namespace (dev)
+make onboard SERVICE=x MODEL_ID=org/model   # new service
+make render SERVICE=x                       # dev artifacts
+make render-prod SERVICE=x                  # prod bundle
+make validate SERVICE=x                     # schema + Python check
+make deploy SERVICE=x DEPLOY_ARGS=--rebuild # render + build + deploy
+make fresh SERVICE=x                        # delete NS + rebuild + configure
+make infra-deploy                           # shared Authentik (once)
+make infra-configure SERVICE=x              # OAuth2 app for service
+make access SERVICE=x                       # tunnel + port-forwards
+make test-service SERVICE=x                 # E2E (6 tests)
+make verify-prod SERVICE=x                  # prod preflight gate
+make prod-pack SERVICE=x                    # tarball handoff
+make teardown SERVICE=x                     # delete app namespace only
 ```
 
-See [adding-a-service.md](adding-a-service.md) for the five-command new-service flow.
+Multi-service: `make render-all`, `make deploy-all`, `make fresh-all`, `make test-all` — see `make help-advanced`.
 
+See [adding-a-service.md](adding-a-service.md) for onboarding.
 
 ## Maintainer touch surface
 
-| Hand-written | Automated |
-|--------------|-----------|
+| Hand-written | Never edit (regenerate) |
+|--------------|-------------------------|
 | `services/<id>/service.yaml` | `services/<id>/generated/**` |
 | `src/models/<name>.py` | K8s manifests, gateway JSON, `deploy.env` |
-| `services/<id>/secrets.local.yaml` | `make render`, `make deploy`, `make test-all` |
-| `services/<id>/prod.overlay.yaml` | `make verify-prod`, `make prod-pack` |
-| `ml_platform/config.yaml` (`ghcr_owner`) | `make render-all` after fork |
+| `services/<id>/secrets.local.yaml` | |
+| `services/<id>/prod.overlay.yaml` | |
+| `ml_platform/config.yaml` | |
 
-Fork handoff: change `ghcr_owner` in `ml_platform/config.yaml`, then `make render-all`.
+After fork: change `ghcr_owner` in `ml_platform/config.yaml`, then `make render-all && make render-prod-all`.
+
+Worker and HPA tuning: [inference-workers.md](inference-workers.md), [autoscaling.md](autoscaling.md).

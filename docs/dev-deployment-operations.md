@@ -5,7 +5,7 @@
 | Layer | Namespace | Tooling |
 |-------|-----------|---------|
 | Shared Authentik | `authentik-reusable-ml-services` | `make infra-deploy` |
-| Per-service API | `services/<id>/` name (e.g. `sem-classifier`) | `make deploy SERVICE=<id>` |
+| Per-service API | `kubernetes.namespace` in `service.yaml` (dev) | `make deploy SERVICE=<id>` |
 | Container images | `ghcr.io/<ghcr_owner>/<service-id>` | `make deploy DEPLOY_ARGS=--rebuild` |
 
 ## Requirements

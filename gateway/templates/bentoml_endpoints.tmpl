@@ -18,8 +18,8 @@
       "timeout": "30s",
       "extra_config": {
         "qos/ratelimit/router": {
-          "max_rate": 100,
-          "capacity": 100
+          "max_rate": {{ .settings.inference_rate_limit }},
+          "capacity": {{ .settings.inference_rate_capacity }}
         },
         "security/cors": {
           "allow_origins": ["*"],

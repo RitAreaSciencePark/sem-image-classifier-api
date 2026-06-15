@@ -1,0 +1,6 @@
+# Optional E2E overrides for sem-classifier.
+# Copy or edit fields as needed; empty test_image_url uses the platform default sample image.
+
+test_image_url: ""
+inference_timeout_s: 60
+expected_labels: []
