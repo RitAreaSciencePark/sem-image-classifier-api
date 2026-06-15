@@ -4,6 +4,7 @@ type: software
 title: Reusable Async ML API Platform
 version: 1.0.0
 date-released: "2026-06-15"
+doi: 10.5281/zenodo.20702007
 license: EUPL-1.2
 repository-code: https://github.com/RitAreaSciencePark/sem-image-classifier-api
 abstract: >

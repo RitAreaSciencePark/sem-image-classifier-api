@@ -2,6 +2,8 @@
 
 Codegen-driven async ML API platform on **Kubernetes**. Define a service in `services/<id>/service.yaml`; the generator renders identical deployment shapes for **dev** (Stencil K3s) and **prod** (manual kubectl). Ships with SEM image classifiers as reference implementations.
 
+**DOI:** [10.5281/zenodo.20702007](https://doi.org/10.5281/zenodo.20702007)
+
 Stack: **BentoML** + **Redis** + **KrakenD** + **PostgreSQL** usage tracking. JWT RS256 via shared Authentik (`authentik-reusable-ml-services`).
 
 ## Maintainer journey
